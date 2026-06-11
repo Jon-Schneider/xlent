@@ -40,6 +40,28 @@ func (g *Graph) IsFormula(n Node) bool {
 	return ok
 }
 
+// Nodes returns every registered formula cell, sorted for deterministic
+// iteration. Only formulas with references are registered — which is fine
+// for reference retargeting, since a formula without references can't point
+// at a moved range.
+func (g *Graph) Nodes() []Node {
+	out := make([]Node, 0, len(g.deps))
+	for n := range g.deps {
+		out = append(out, n)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Sheet != b.Sheet {
+			return a.Sheet < b.Sheet
+		}
+		if a.Row != b.Row {
+			return a.Row < b.Row
+		}
+		return a.Col < b.Col
+	})
+	return out
+}
+
 // directDependents returns the formula cells that reference n directly,
 // sorted for deterministic traversal order.
 func (g *Graph) directDependents(n Node) []Node {

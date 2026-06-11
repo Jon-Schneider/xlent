@@ -276,6 +276,41 @@ func (w *Workbook) IsEmpty(sheet, cellName string) bool {
 	return w.RawContent(sheet, cellName) == ""
 }
 
+// FormulaRewrite records one formula updated by RetargetReferences, in
+// RawContent form so it can ride along in an undo command.
+type FormulaRewrite struct {
+	Sheet  string
+	Cell   string
+	Before string
+	After  string
+}
+
+// RetargetReferences rewrites every formula that referenced cells inside a
+// just-moved range so it points at their new location (Excel's cut+paste
+// semantics). Rewrites flow through SetCell, so the dependency graph and
+// value caches stay consistent. The returned list is what changed.
+func (w *Workbook) RetargetReferences(move engine.MoveSpec) []FormulaRewrite {
+	var out []FormulaRewrite
+	// Snapshot first: SetCell mutates the graph while we iterate.
+	for _, n := range w.graph.Nodes() {
+		cell := engine.CellName(n.Col, n.Row)
+		formula, _ := w.file.GetCellFormula(n.Sheet, cell)
+		if formula == "" {
+			continue
+		}
+		rewritten, changed := engine.RetargetFormula(n.Sheet, formula, move)
+		if !changed {
+			continue
+		}
+		before, after := "="+formula, "="+rewritten
+		if err := w.SetCell(n.Sheet, cell, after); err != nil {
+			continue
+		}
+		out = append(out, FormulaRewrite{Sheet: n.Sheet, Cell: cell, Before: before, After: after})
+	}
+	return out
+}
+
 // ColWidth returns a column's display width in terminal cells, derived from
 // the width stored in the file (Excel character units, which map closely to
 // monospace cells). Columns without an explicit width get fallback.

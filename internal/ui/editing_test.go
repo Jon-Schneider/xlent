@@ -167,6 +167,96 @@ func TestCutPasteMovesContentAndUndoRestoresBoth(t *testing.T) {
 	}
 }
 
+func TestCutPasteRetargetsFormulasPointingAtMovedCell(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	// C1 watches A1; moving A1 must drag the reference along.
+	app.setCursor(position{Col: 3, Row: 1}, false)
+	typeText(t, app, "=A1*2")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	app.setCursor(position{Col: 1, Row: 1}, false)
+	press(t, app, tea.Key{Code: 'x', Mod: tea.ModCtrl})
+	app.setCursor(position{Col: 2, Row: 3}, false) // B3
+	press(t, app, tea.Key{Code: 'v', Mod: tea.ModCtrl})
+
+	if got := wb.RawContent(app.sheet, "C1"); got != "=B3*2" {
+		t.Errorf("C1 = %q, want =B3*2 (reference followed the move)", got)
+	}
+	if got := wb.DisplayValue(app.sheet, "C1"); got != "20" {
+		t.Errorf("C1 value = %q, want 20", got)
+	}
+
+	// One undo reverses the whole move including the rewrite.
+	press(t, app, tea.Key{Code: 'z', Mod: tea.ModCtrl})
+	if got := wb.RawContent(app.sheet, "C1"); got != "=A1*2" {
+		t.Errorf("C1 after undo = %q, want =A1*2", got)
+	}
+	if got := wb.DisplayValue(app.sheet, "A1"); got != "10" {
+		t.Errorf("A1 after undo = %q, want 10", got)
+	}
+}
+
+func TestCutPasteRetargetsAbsoluteReference(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	app.setCursor(position{Col: 3, Row: 1}, false)
+	typeText(t, app, "=$A$1*2")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	app.setCursor(position{Col: 1, Row: 1}, false)
+	press(t, app, tea.Key{Code: 'x', Mod: tea.ModCtrl})
+	app.setCursor(position{Col: 4, Row: 4}, false)
+	press(t, app, tea.Key{Code: 'v', Mod: tea.ModCtrl})
+
+	if got := wb.RawContent(app.sheet, "C1"); got != "=$D$4*2" {
+		t.Errorf("C1 = %q, want =$D$4*2 (absolute refs follow moves)", got)
+	}
+}
+
+func TestCutPasteRewritesInternalReferencesOfMovedBlock(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	// A5 already holds "lonely"; build a self-contained block at A7:A8.
+	app.setCursor(position{Col: 1, Row: 7}, false)
+	typeText(t, app, "5")
+	press(t, app, tea.Key{Code: tea.KeyEnter}) // now at A8
+	typeText(t, app, "=A7+1")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	// Select A7:A8, cut, paste at C1.
+	app.setCursor(position{Col: 1, Row: 7}, false)
+	press(t, app, tea.Key{Code: tea.KeyDown, Mod: tea.ModShift})
+	press(t, app, tea.Key{Code: 'x', Mod: tea.ModCtrl})
+	app.setCursor(position{Col: 3, Row: 1}, false)
+	press(t, app, tea.Key{Code: 'v', Mod: tea.ModCtrl})
+
+	if got := wb.RawContent(app.sheet, "C2"); got != "=C1+1" {
+		t.Errorf("C2 = %q, want =C1+1 (internal reference moved with block)", got)
+	}
+	if got := wb.DisplayValue(app.sheet, "C2"); got != "6" {
+		t.Errorf("C2 value = %q, want 6", got)
+	}
+}
+
+func TestCutPasteLeavesPartiallyOverlappingRangeAlone(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	app.setCursor(position{Col: 3, Row: 1}, false)
+	typeText(t, app, "=SUM(A1:A2)")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	// Move only A1 (partial overlap with the summed range).
+	app.setCursor(position{Col: 1, Row: 1}, false)
+	press(t, app, tea.Key{Code: 'x', Mod: tea.ModCtrl})
+	app.setCursor(position{Col: 5, Row: 5}, false)
+	press(t, app, tea.Key{Code: 'v', Mod: tea.ModCtrl})
+
+	if got := wb.RawContent(app.sheet, "C1"); got != "=SUM(A1:A2)" {
+		t.Errorf("C1 = %q, want untouched =SUM(A1:A2) on partial overlap", got)
+	}
+}
+
 func TestExternalPasteFillsRangeFromTSV(t *testing.T) {
 	app, wb := setupTestApp(t)
 

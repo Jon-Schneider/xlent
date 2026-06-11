@@ -54,7 +54,7 @@ func adjustRefText(ref string, dCol, dRow int) string {
 	isRange := len(parts) == 2
 	adjusted := make([]string, len(parts))
 	for i, part := range parts {
-		shifted, ok, valid := adjustRefPart(part, dCol, dRow, isRange)
+		shifted, ok, valid := adjustRefPart(part, dCol, dRow, isRange, false)
 		if !valid {
 			return ref // not actually a reference; leave it alone
 		}
@@ -70,7 +70,10 @@ func adjustRefText(ref string, dCol, dRow int) string {
 // text isn't an A1-style reference at all; ok is false when the shift lands
 // out of bounds. Column-only ("A") and row-only ("3") forms are references
 // only inside a range — a lone "ABC" is a defined name, not column 731.
-func adjustRefPart(part string, dCol, dRow int, isRange bool) (shifted string, ok, valid bool) {
+//
+// shiftAnchored controls whether $-anchored components move: copies leave
+// them alone (false), cell moves drag absolute references along (true).
+func adjustRefPart(part string, dCol, dRow int, isRange, shiftAnchored bool) (shifted string, ok, valid bool) {
 	s := part
 	colAnchored := strings.HasPrefix(s, "$")
 	if colAnchored {
@@ -114,7 +117,7 @@ func adjustRefPart(part string, dCol, dRow int, isRange bool) (shifted string, o
 		if err != nil {
 			return "", false, false
 		}
-		if !colAnchored {
+		if !colAnchored || shiftAnchored {
 			col += dCol
 			if col < 1 || col > MaxCols {
 				return "", false, true
@@ -136,7 +139,7 @@ func adjustRefPart(part string, dCol, dRow int, isRange bool) (shifted string, o
 		if row == 0 {
 			return "", false, false
 		}
-		if !rowAnchored {
+		if !rowAnchored || shiftAnchored {
 			row += dRow
 			if row < 1 || row > MaxRows {
 				return "", false, true

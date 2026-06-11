@@ -123,25 +123,23 @@ func (a *App) pasteFromRegister() {
 
 	// A cut clears its source first (skipping cells the paste overwrites
 	// anyway), so the single command captures the whole move.
-	if block.Cut {
-		srcCol, srcRow, perr := engine.ParseCellName(block.SourceCell)
-		if perr == nil {
-			for r := 0; r < block.Rows(); r++ {
-				for c := 0; c < block.Cols(); c++ {
-					cell := engine.CellName(srcCol+c, srcRow+r)
-					if targets[block.SourceSheet+"!"+cell] {
-						continue
-					}
-					before := a.wb.RawContent(block.SourceSheet, cell)
-					if before == "" {
-						continue
-					}
-					if err := a.wb.SetCell(block.SourceSheet, cell, ""); err != nil {
-						a.statusMsg = err.Error()
-						continue
-					}
-					edits = append(edits, undo.CellEdit{Sheet: block.SourceSheet, Cell: cell, Before: before})
+	srcCol, srcRow, srcErr := engine.ParseCellName(block.SourceCell)
+	if block.Cut && srcErr == nil {
+		for r := 0; r < block.Rows(); r++ {
+			for c := 0; c < block.Cols(); c++ {
+				cell := engine.CellName(srcCol+c, srcRow+r)
+				if targets[block.SourceSheet+"!"+cell] {
+					continue
 				}
+				before := a.wb.RawContent(block.SourceSheet, cell)
+				if before == "" {
+					continue
+				}
+				if err := a.wb.SetCell(block.SourceSheet, cell, ""); err != nil {
+					a.statusMsg = err.Error()
+					continue
+				}
+				edits = append(edits, undo.CellEdit{Sheet: block.SourceSheet, Cell: cell, Before: before})
 			}
 		}
 	}
@@ -156,6 +154,28 @@ func (a *App) pasteFromRegister() {
 			continue
 		}
 		edits = append(edits, undo.CellEdit{Sheet: wr.Sheet, Cell: wr.Cell, Before: before, After: wr.Content})
+	}
+
+	// A move drags references along with it: every formula that pointed
+	// into the cut range — including formulas inside the moved block, which
+	// were pasted verbatim — is rewritten to the new location, inside the
+	// same undo command.
+	if block.Cut && srcErr == nil {
+		move := engine.MoveSpec{
+			From: engine.Ref{
+				Sheet:  block.SourceSheet,
+				MinCol: srcCol,
+				MinRow: srcRow,
+				MaxCol: srcCol + block.Cols() - 1,
+				MaxRow: srcRow + block.Rows() - 1,
+			},
+			ToSheet: a.sheet,
+			DCol:    a.cursor.Col - srcCol,
+			DRow:    a.cursor.Row - srcRow,
+		}
+		for _, rw := range a.wb.RetargetReferences(move) {
+			edits = append(edits, undo.CellEdit{Sheet: rw.Sheet, Cell: rw.Cell, Before: rw.Before, After: rw.After})
+		}
 	}
 
 	a.undoStack.Record(undo.Command{Label: "Paste", Edits: edits})

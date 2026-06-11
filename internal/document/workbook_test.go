@@ -2,6 +2,8 @@ package document
 
 import (
 	"testing"
+
+	"github.com/Jon-Schneider/xl/internal/engine"
 )
 
 func TestNewWorkbookStartsBlankAndClean(t *testing.T) {
@@ -192,6 +194,39 @@ func TestUsedRangeTracksExtent(t *testing.T) {
 	mustSetCell(t, w, sheet, "C7", "x")
 	if c, r := w.UsedRange(sheet); c != 3 || r != 7 {
 		t.Errorf("UsedRange = (%d,%d), want (3,7)", c, r)
+	}
+}
+
+func TestRetargetReferencesUpdatesWatchersOnOtherSheets(t *testing.T) {
+	w := New()
+	defer w.Close()
+	sheet := w.Sheets()[0]
+	if err := w.AddSheet("Data"); err != nil {
+		t.Fatal(err)
+	}
+
+	mustSetCell(t, w, sheet, "A1", "10")
+	mustSetCell(t, w, "Data", "B2", "=Sheet1!A1*2")
+
+	// Simulate the document side of a move of Sheet1!A1 to Sheet1!B5.
+	mustSetCell(t, w, sheet, "B5", "10")
+	mustSetCell(t, w, sheet, "A1", "")
+	move := engine.MoveSpec{
+		From:    engine.Ref{Sheet: sheet, MinCol: 1, MinRow: 1, MaxCol: 1, MaxRow: 1},
+		ToSheet: sheet,
+		DCol:    1,
+		DRow:    4,
+	}
+	rewrites := w.RetargetReferences(move)
+
+	if len(rewrites) != 1 {
+		t.Fatalf("rewrites = %+v, want exactly one", rewrites)
+	}
+	if got := w.RawContent("Data", "B2"); got != "=Sheet1!B5*2" {
+		t.Errorf("Data!B2 = %q, want =Sheet1!B5*2", got)
+	}
+	if got := w.DisplayValue("Data", "B2"); got != "20" {
+		t.Errorf("Data!B2 value = %q, want 20", got)
 	}
 }
 

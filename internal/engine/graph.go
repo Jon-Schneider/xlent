@@ -122,3 +122,45 @@ func (g *Graph) Invalidate(changed Node) (order []Node, cycles map[Node]bool) {
 	}
 	return order, cycles
 }
+
+// FindCycles scans the entire graph and returns every formula cell that
+// participates in a reference cycle. Intended for one-shot use after loading
+// a file; incremental edits get cycle information from Invalidate.
+func (g *Graph) FindCycles() map[Node]bool {
+	const (
+		unvisited = 0
+		onStack   = 1
+		done      = 2
+	)
+	state := make(map[Node]int)
+	cycles := make(map[Node]bool)
+	var stack []Node
+
+	var walk func(n Node)
+	walk = func(n Node) {
+		state[n] = onStack
+		stack = append(stack, n)
+		for _, dep := range g.directDependents(n) {
+			switch state[dep] {
+			case unvisited:
+				walk(dep)
+			case onStack:
+				for i := len(stack) - 1; i >= 0; i-- {
+					cycles[stack[i]] = true
+					if stack[i] == dep {
+						break
+					}
+				}
+			}
+		}
+		stack = stack[:len(stack)-1]
+		state[n] = done
+	}
+
+	for n := range g.deps {
+		if state[n] == unvisited {
+			walk(n)
+		}
+	}
+	return cycles
+}

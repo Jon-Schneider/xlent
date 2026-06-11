@@ -76,6 +76,25 @@ func TestTypingOperatorLocksReferenceAndAllowsPointingAgain(t *testing.T) {
 	}
 }
 
+func TestCommittingUnclosedFormulaAutoClosesParens(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	// Point out a range and hit Enter without ever typing ")".
+	app.setCursor(position{Col: 4, Row: 1}, false) // D1
+	typeText(t, app, "=sum(")
+	press(t, app, tea.Key{Code: tea.KeyLeft})                    // C1
+	press(t, app, tea.Key{Code: tea.KeyLeft})                    // B1
+	press(t, app, tea.Key{Code: tea.KeyLeft, Mod: tea.ModShift}) // A1:B1
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	if got := wb.RawContent(app.sheet, "D1"); got != "=SUM(A1:B1)" {
+		t.Errorf("D1 = %q, want =SUM(A1:B1) (paren closed, name uppercased)", got)
+	}
+	if got := wb.DisplayValue(app.sheet, "D1"); got != "30" {
+		t.Errorf("D1 value = %q, want 30", got)
+	}
+}
+
 func TestArrowCommitsFormulaWhenNotAtReferencePosition(t *testing.T) {
 	app, wb := setupTestApp(t)
 

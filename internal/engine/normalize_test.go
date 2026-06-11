@@ -49,6 +49,38 @@ func TestNormalizeFormulaPreservesStringLiteralsExactly(t *testing.T) {
 	}
 }
 
+func TestNormalizeFormulaClosesTrailingParens(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"=SUM(A2:A3", "=SUM(A2:A3)"},
+		{"=IF(A1>0,SUM(B1:B2", "=IF(A1>0,SUM(B1:B2))"},
+		{"=(A1+B1", "=(A1+B1)"},
+		{"=sum(a1", "=SUM(A1)"},
+		{"=SUM(A1)", "=SUM(A1)"}, // balanced stays balanced
+	}
+	for _, tt := range tests {
+		if got := NormalizeFormula(tt.in, nil); got != tt.want {
+			t.Errorf("NormalizeFormula(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestNormalizeFormulaClosesUnterminatedString(t *testing.T) {
+	got := NormalizeFormula(`="unclosed`, nil)
+
+	if got != `="unclosed"` {
+		t.Errorf("NormalizeFormula = %q, want closing quote appended", got)
+	}
+
+	// A string closed by the "" escape rule still terminates correctly.
+	got = NormalizeFormula(`=LEN("say ""hi`, nil)
+	if got != `=LEN("say ""hi")` {
+		t.Errorf("NormalizeFormula = %q, want quote and paren closed", got)
+	}
+}
+
 func TestNormalizeFormulaLeavesDefinedNamesAlone(t *testing.T) {
 	got := NormalizeFormula("=taxrate*a1", nil)
 

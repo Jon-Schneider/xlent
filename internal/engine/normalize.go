@@ -8,15 +8,18 @@ import (
 
 // NormalizeFormula rewrites a formula the way Excel does when one is
 // entered: function names, cell references, and TRUE/FALSE literals are
-// uppercased, and sheet qualifiers take the canonical casing from sheets.
-// This matters beyond cosmetics — excelize's calc engine dispatches
-// functions by their uppercase names, so =sum(a1:a2) only evaluates after
-// normalization. String literals are preserved exactly.
+// uppercased, sheet qualifiers take the canonical casing from sheets, and
+// easy incompletions are repaired — an unterminated string literal gets its
+// closing quote and unclosed parentheses are closed at the end. This
+// matters beyond cosmetics: excelize's calc engine dispatches functions by
+// their uppercase names, so =sum(a1:a2) only evaluates after
+// normalization. String literal contents are preserved exactly.
 //
 // The leading "=" is optional and preserved. sheets may be nil when no
 // workbook context is available.
 func NormalizeFormula(formula string, sheets []string) string {
 	body, hadEquals := strings.CutPrefix(formula, "=")
+	body = closeUnterminatedString(body)
 
 	parser := efp.ExcelParser()
 	var b strings.Builder
@@ -26,17 +29,22 @@ func NormalizeFormula(formula string, sheets []string) string {
 	// Re-render by hand rather than with parser.Render: efp does not
 	// re-escape quotes inside string literals, which would corrupt
 	// ="say ""hi""" on the way back out.
+	depth := 0
 	for _, t := range parser.Parse(body) {
 		switch {
 		case t.TType == efp.TokenTypeFunction && t.TSubType == efp.TokenSubTypeStart:
 			b.WriteString(strings.ToUpper(t.TValue))
 			b.WriteByte('(')
+			depth++
 		case t.TType == efp.TokenTypeFunction:
 			b.WriteByte(')')
+			depth--
 		case t.TType == efp.TokenTypeSubexpression && t.TSubType == efp.TokenSubTypeStart:
 			b.WriteByte('(')
+			depth++
 		case t.TType == efp.TokenTypeSubexpression:
 			b.WriteByte(')')
+			depth--
 		case t.TType == efp.TokenTypeOperand && t.TSubType == efp.TokenSubTypeText:
 			b.WriteByte('"')
 			b.WriteString(strings.ReplaceAll(t.TValue, `"`, `""`))
@@ -51,7 +59,27 @@ func NormalizeFormula(formula string, sheets []string) string {
 			b.WriteString(t.TValue)
 		}
 	}
+	// Close whatever the user left open: =SUM(A2:A3 commits as =SUM(A2:A3).
+	for ; depth > 0; depth-- {
+		b.WriteByte(')')
+	}
 	return b.String()
+}
+
+// closeUnterminatedString appends the missing closing quote when a formula
+// ends inside a string literal. Quote parity decides: the "" escape inside
+// a string toggles twice and cancels out.
+func closeUnterminatedString(s string) string {
+	inString := false
+	for i := 0; i < len(s); i++ {
+		if s[i] == '"' {
+			inString = !inString
+		}
+	}
+	if inString {
+		return s + `"`
+	}
+	return s
 }
 
 // normalizeRefText uppercases a reference and gives its sheet qualifier the

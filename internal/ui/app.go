@@ -36,6 +36,9 @@ type App struct {
 	undoStack *undo.Stack
 	register  clipboard.Register
 
+	menus   []menu
+	menuBar menuBar
+
 	// keyboardEnhanced reports whether the terminal supports the kitty
 	// keyboard protocol (Tier 1 in the spec). When false, shortcuts like
 	// Ctrl+Shift+Arrow are unavailable and fallbacks apply.
@@ -67,6 +70,7 @@ func NewApp(path string) (*App, error) {
 		topRow:    1,
 		leftCol:   1,
 		undoStack: undo.NewStack(),
+		menus:     defaultMenus(),
 	}, nil
 }
 
@@ -87,6 +91,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case a.prompt.active():
 			return a.handlePromptKey(msg)
+		case a.menuBar.open:
+			return a.handleMenuKey(msg)
 		case a.editor.active:
 			return a.handleEditingKey(msg)
 		default:
@@ -103,6 +109,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseClickMsg:
+		if handled, model, cmd := a.handleMenuClick(tea.Mouse(msg)); handled {
+			return model, cmd
+		}
 		if a.editor.active {
 			a.commitEdit(0, 0)
 		}
@@ -171,33 +180,166 @@ func (a *App) handleEditingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// requestWithDirtyCheck runs a destructive-to-unsaved-work action, asking
+// about unsaved changes first when needed.
+func (a *App) requestWithDirtyCheck(action pendingAction, gerund string) (tea.Model, tea.Cmd) {
+	if !a.wb.Dirty() {
+		return a.runPending(action)
+	}
+	a.prompt.open(promptConfirmDirty, "Save changes before "+gerund+"? (y/n, esc to cancel)", "")
+	a.prompt.pending = action
+	return a, nil
+}
+
+// runPending executes the action a dirty-check was protecting.
+func (a *App) runPending(action pendingAction) (tea.Model, tea.Cmd) {
+	switch action {
+	case pendingQuit:
+		return a, tea.Quit
+	case pendingOpenPrompt:
+		a.prompt.open(promptOpen, "Open: ", "")
+	case pendingNew:
+		a.wb.Close()
+		a.adoptWorkbook(document.New())
+	}
+	return a, nil
+}
+
+// handleMenuKey processes keys while a menu is open.
+func (a *App) handleMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	items := a.menus[a.menuBar.active].items
+	switch msg.String() {
+	case "esc", "f10":
+		a.menuBar.close()
+	case "left":
+		a.menuBar.openMenu((a.menuBar.active - 1 + len(a.menus)) % len(a.menus))
+	case "right":
+		a.menuBar.openMenu((a.menuBar.active + 1) % len(a.menus))
+	case "up":
+		a.menuBar.moveSelection(items, -1)
+	case "down":
+		a.menuBar.moveSelection(items, 1)
+	case "enter", "space":
+		action := items[a.menuBar.selected].action
+		a.menuBar.close()
+		return a.execMenuAction(action)
+	}
+	return a, nil
+}
+
+// handleMenuClick consumes mouse clicks aimed at the menu bar or an open
+// dropdown. It reports whether the click was handled.
+func (a *App) handleMenuClick(m tea.Mouse) (bool, tea.Model, tea.Cmd) {
+	if m.Button != tea.MouseLeft {
+		return false, a, nil
+	}
+
+	// Click on a menu title toggles that menu.
+	if m.Y == 0 {
+		for i, xr := range a.menuBar.titleX {
+			if m.X >= xr[0] && m.X < xr[1] {
+				if a.menuBar.open && a.menuBar.active == i {
+					a.menuBar.close()
+				} else {
+					a.menuBar.openMenu(i)
+				}
+				return true, a, nil
+			}
+		}
+		if a.menuBar.open {
+			a.menuBar.close()
+			return true, a, nil
+		}
+		return false, a, nil
+	}
+
+	if !a.menuBar.open {
+		return false, a, nil
+	}
+
+	// Click inside the open dropdown executes the item under the pointer.
+	line := m.Y - 1
+	if line >= 0 && line < len(a.menuBar.dropLines) &&
+		m.X >= a.menuBar.dropX && m.X < a.menuBar.dropX+a.menuBar.dropW {
+		idx := a.menuBar.dropLines[line]
+		if idx < 0 {
+			return true, a, nil // divider
+		}
+		action := a.menus[a.menuBar.active].items[idx].action
+		a.menuBar.close()
+		model, cmd := a.execMenuAction(action)
+		return true, model, cmd
+	}
+
+	// Click anywhere else closes the menu and is swallowed.
+	a.menuBar.close()
+	return true, a, nil
+}
+
+// execMenuAction routes a menu choice to the same handlers the shortcuts
+// use.
+func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
+	a.statusMsg = ""
+	switch action {
+	case actNew:
+		return a.requestWithDirtyCheck(pendingNew, "starting a new workbook")
+	case actOpen:
+		return a.requestWithDirtyCheck(pendingOpenPrompt, "opening")
+	case actSave:
+		a.save()
+	case actSaveAs:
+		a.prompt.open(promptSaveAs, "Save as: ", a.wb.Path())
+	case actQuit:
+		return a.requestWithDirtyCheck(pendingQuit, "quitting")
+	case actUndo:
+		a.undo()
+	case actRedo:
+		a.redo()
+	case actCut:
+		return a, a.copySelection(true)
+	case actCopy:
+		return a, a.copySelection(false)
+	case actPaste:
+		a.pasteFromRegister()
+	case actClear:
+		a.clearSelection()
+	case actSelectAll:
+		a.selectUsedRange()
+	case actPrevSheet:
+		a.switchSheet(-1)
+	case actNextSheet:
+		a.switchSheet(1)
+	case actAddSheet:
+		a.addSheet()
+	case actAbout:
+		a.statusMsg = "xl — an Excel-style terminal spreadsheet. F10 or click for menus."
+	}
+	return a, nil
+}
+
 // handlePromptKey processes keys while the status-line prompt is open.
 func (a *App) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if a.prompt.isConfirm() {
 		switch msg.String() {
 		case "y", "Y":
-			kind := a.prompt.kind
+			pending := a.prompt.pending
 			a.prompt.close()
 			if a.wb.Path() == "" {
+				// Saving needs a path first; carry the pending action
+				// through the save-as prompt.
 				a.prompt.open(promptSaveAs, "Save as: ", "")
-				a.prompt.quitAfter = kind == promptConfirmQuit
+				a.prompt.pending = pending
 				return a, nil
 			}
 			if err := a.wb.Save(); err != nil {
 				a.statusMsg = err.Error()
 				return a, nil
 			}
-			if kind == promptConfirmQuit {
-				return a, tea.Quit
-			}
-			a.prompt.open(promptOpen, "Open: ", "")
+			return a.runPending(pending)
 		case "n", "N":
-			kind := a.prompt.kind
+			pending := a.prompt.pending
 			a.prompt.close()
-			if kind == promptConfirmQuit {
-				return a, tea.Quit
-			}
-			a.prompt.open(promptOpen, "Open: ", "")
+			return a.runPending(pending)
 		case "esc", "ctrl+c":
 			a.prompt.close()
 		}
@@ -228,22 +370,19 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "ctrl+q":
-		if a.wb.Dirty() {
-			a.prompt.open(promptConfirmQuit, "Save changes before quitting? (y/n, esc to cancel)", "")
-			return a, nil
-		}
-		return a, tea.Quit
+		return a.requestWithDirtyCheck(pendingQuit, "quitting")
+	case "ctrl+o":
+		return a.requestWithDirtyCheck(pendingOpenPrompt, "opening")
+	case "ctrl+n":
+		return a.requestWithDirtyCheck(pendingNew, "starting a new workbook")
 
 	case "ctrl+s":
 		a.save()
 	case "ctrl+shift+s":
 		a.prompt.open(promptSaveAs, "Save as: ", a.wb.Path())
-	case "ctrl+o":
-		if a.wb.Dirty() {
-			a.prompt.open(promptConfirmOpen, "Save changes before opening? (y/n, esc to cancel)", "")
-		} else {
-			a.prompt.open(promptOpen, "Open: ", "")
-		}
+
+	case "f10":
+		a.menuBar.openMenu(0)
 
 	case "ctrl+z":
 		a.undo()
@@ -547,6 +686,8 @@ func (a *App) View() tea.View {
 	width := max(a.width, 20)
 
 	var b strings.Builder
+	b.WriteString(a.renderMenuBar(width))
+	b.WriteByte('\n')
 	b.WriteString(a.renderFormulaBar(width))
 	b.WriteByte('\n')
 	b.WriteString(a.renderGrid(a.layout))
@@ -555,7 +696,7 @@ func (a *App) View() tea.View {
 	b.WriteByte('\n')
 	b.WriteString(a.renderStatusBar(width))
 
-	v := tea.NewView(b.String())
+	v := tea.NewView(a.overlayDropdown(b.String()))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = a.windowTitle()

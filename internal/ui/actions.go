@@ -237,7 +237,7 @@ func (a *App) save() {
 func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 	kind := a.prompt.kind
 	text := strings.TrimSpace(a.prompt.String())
-	quitAfter := a.prompt.quitAfter
+	pending := a.prompt.pending
 	a.prompt.close()
 
 	switch kind {
@@ -249,8 +249,8 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 			a.statusMsg = err.Error()
 			return a, nil
 		}
-		if quitAfter {
-			return a, tea.Quit
+		if pending != pendingNone {
+			return a.runPending(pending)
 		}
 		a.statusMsg = "Saved " + text
 
@@ -280,6 +280,30 @@ func (a *App) adoptWorkbook(wb *document.Workbook) {
 	a.undoStack = undo.NewStack()
 	a.editor.stop()
 	a.statusMsg = ""
+}
+
+// addSheet creates a new sheet with the first free SheetN name and
+// switches to it.
+func (a *App) addSheet() {
+	names := a.wb.Sheets()
+	taken := make(map[string]bool, len(names))
+	for _, n := range names {
+		taken[strings.ToLower(n)] = true
+	}
+	name := ""
+	for i := len(names) + 1; ; i++ {
+		name = fmt.Sprintf("Sheet%d", i)
+		if !taken[strings.ToLower(name)] {
+			break
+		}
+	}
+	if err := a.wb.AddSheet(name); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	a.sheet = name
+	a.cursor, a.anchor = position{Col: 1, Row: 1}, position{Col: 1, Row: 1}
+	a.topRow, a.leftCol = 1, 1
 }
 
 // selectionStats renders the status bar aggregates for multi-cell

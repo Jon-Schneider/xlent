@@ -8,20 +8,27 @@ const (
 	promptNone promptKind = iota
 	promptSaveAs
 	promptOpen
-	promptConfirmQuit // "Save changes before quitting? (y/n)"
-	promptConfirmOpen // "Save changes before opening? (y/n)"
+	promptConfirmDirty // "Save changes before <pending>? (y/n)"
+)
+
+// pendingAction is what happens after a dirty-check prompt resolves (and
+// after any save it triggers succeeds).
+type pendingAction int
+
+const (
+	pendingNone pendingAction = iota
+	pendingQuit
+	pendingOpenPrompt
+	pendingNew
 )
 
 // prompt is the one-line input that temporarily replaces the status bar.
 type prompt struct {
-	kind  promptKind
-	label string
-	text  []rune
-	pos   int
-
-	// quitAfter makes a successful save-as quit the app — set when save-as
-	// was reached from the quit flow on a never-saved workbook.
-	quitAfter bool
+	kind    promptKind
+	label   string
+	text    []rune
+	pos     int
+	pending pendingAction
 }
 
 func (p *prompt) active() bool {
@@ -29,7 +36,7 @@ func (p *prompt) active() bool {
 }
 
 func (p *prompt) isConfirm() bool {
-	return p.kind == promptConfirmQuit || p.kind == promptConfirmOpen
+	return p.kind == promptConfirmDirty
 }
 
 func (p *prompt) open(kind promptKind, label, initial string) {

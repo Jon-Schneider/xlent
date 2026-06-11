@@ -219,7 +219,7 @@ func TestViewRendersValuesHeadersAndChrome(t *testing.T) {
 			t.Errorf("rendered view missing %q", want)
 		}
 	}
-	header := strings.Split(content, "\n")[1]
+	header := strings.Split(content, "\n")[2]
 	for _, letter := range []string{"A", "B", "C"} {
 		if !strings.Contains(header, letter) {
 			t.Errorf("header row missing column letter %s: %q", letter, header)

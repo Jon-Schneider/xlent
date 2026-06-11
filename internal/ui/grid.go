@@ -86,10 +86,10 @@ func (a *App) colWidth(col int) int {
 
 // computeLayout sizes the chrome and works out which columns and rows fit.
 func (a *App) computeLayout() gridLayout {
-	width, height := max(a.width, 20), max(a.height, 6)
+	width, height := max(a.width, 20), max(a.height, 7)
 
-	// Chrome: formula bar, column header, sheet tabs, status bar.
-	rows := max(height-4, 1)
+	// Chrome: menu bar, formula bar, column header, sheet tabs, status bar.
+	rows := max(height-5, 1)
 	topRow := a.topRow
 
 	gutterW := max(4, len(strconv.Itoa(topRow+rows-1))+1)
@@ -105,8 +105,8 @@ func (a *App) computeLayout() gridLayout {
 
 	return gridLayout{
 		gutterW: gutterW,
-		headerY: 1,
-		gridY0:  2,
+		headerY: 2,
+		gridY0:  3,
 		rows:    rows,
 		topRow:  topRow,
 		cols:    cols,

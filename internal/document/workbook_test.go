@@ -105,6 +105,23 @@ func TestCircularReferenceShowsErrorAndRecoversWhenBroken(t *testing.T) {
 	}
 }
 
+func TestLowercaseFormulaEntryEvaluates(t *testing.T) {
+	w := New()
+	defer w.Close()
+	sheet := w.Sheets()[0]
+
+	mustSetCell(t, w, sheet, "A1", "1")
+	mustSetCell(t, w, sheet, "A2", "2")
+	mustSetCell(t, w, sheet, "A5", "=sum(a1:a2)")
+
+	if got := w.DisplayValue(sheet, "A5"); got != "3" {
+		t.Errorf("A5 = %q, want 3 (lowercase formula normalized on entry)", got)
+	}
+	if got := w.RawContent(sheet, "A5"); got != "=SUM(A1:A2)" {
+		t.Errorf("A5 raw = %q, want normalized =SUM(A1:A2)", got)
+	}
+}
+
 func TestDivisionByZeroShowsExcelError(t *testing.T) {
 	w := New()
 	defer w.Close()

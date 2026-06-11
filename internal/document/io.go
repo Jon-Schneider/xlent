@@ -46,9 +46,12 @@ func Load(path string) (*Workbook, error) {
 }
 
 // rebuildGraph registers every formula already present in the file so that
-// edits propagate correctly from the first keystroke.
+// edits propagate correctly from the first keystroke. Formulas are also
+// normalized (lowercase function names won't evaluate); that rewrite is
+// semantically neutral, so it doesn't mark the workbook dirty.
 func (w *Workbook) rebuildGraph() {
-	for _, sheet := range w.Sheets() {
+	sheets := w.Sheets()
+	for _, sheet := range sheets {
 		rows, err := w.file.GetRows(sheet)
 		if err != nil {
 			continue
@@ -59,6 +62,11 @@ func (w *Workbook) rebuildGraph() {
 				formula, _ := w.file.GetCellFormula(sheet, cell)
 				if formula == "" {
 					continue
+				}
+				if normalized := engine.NormalizeFormula(formula, sheets); normalized != formula {
+					if err := w.file.SetCellFormula(sheet, cell, normalized); err == nil {
+						formula = normalized
+					}
 				}
 				node := engine.Node{Sheet: sheet, Col: c + 1, Row: r + 1}
 				w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefs(sheet, formula)))

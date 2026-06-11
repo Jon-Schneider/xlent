@@ -68,6 +68,40 @@ func TestLoadedFormulasPropagateEditsImmediately(t *testing.T) {
 	}
 }
 
+func TestLoadNormalizesLowercaseFormulasWithoutDirtying(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lower.xlsx")
+
+	// Write a file with a lowercase formula directly, bypassing SetCell's
+	// normalization — as an older xl or another tool might have.
+	w := New()
+	sheet := w.Sheets()[0]
+	mustSetCell(t, w, sheet, "A1", "1")
+	mustSetCell(t, w, sheet, "A2", "2")
+	if err := w.file.SetCellFormula(sheet, "A3", "sum(a1:a2)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.SaveAs(path); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+	w.Close()
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	defer loaded.Close()
+
+	if got := loaded.DisplayValue(sheet, "A3"); got != "3" {
+		t.Errorf("A3 = %q, want 3 after load-time normalization", got)
+	}
+	if got := loaded.RawContent(sheet, "A3"); got != "=SUM(A1:A2)" {
+		t.Errorf("A3 raw = %q, want =SUM(A1:A2)", got)
+	}
+	if loaded.Dirty() {
+		t.Error("normalization alone must not mark the workbook dirty")
+	}
+}
+
 func TestCsvLoadParsesNumbersAndText(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data.csv")
 	csv := "name,qty\nwidget,3\ngadget,4.5\n"

@@ -107,7 +107,9 @@ func (w *Workbook) SetCell(sheet, cellName, input string) error {
 		w.graph.Remove(node)
 
 	case strings.HasPrefix(input, "=") && len(input) > 1:
-		formula := input[1:]
+		// Normalize on entry like Excel: =sum(a1:a2) is stored as
+		// =SUM(A1:A2). excelize's calc engine only knows uppercase names.
+		formula := engine.NormalizeFormula(input[1:], w.Sheets())
 		if err := w.file.SetCellFormula(sheet, cell, formula); err != nil {
 			return fmt.Errorf("set formula %s!%s: %w", sheet, cell, err)
 		}

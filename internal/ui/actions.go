@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -264,6 +265,10 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 	case promptSaveAs:
 		if text == "" {
 			return a, nil
+		}
+		// A bare filename means xlsx; only .csv has to be asked for.
+		if filepath.Ext(text) == "" {
+			text += ".xlsx"
 		}
 		if err := a.wb.SaveAs(text); err != nil {
 			a.statusMsg = err.Error()

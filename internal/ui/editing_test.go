@@ -305,3 +305,20 @@ func TestSaveAsPromptWritesFileAndAdoptsPath(t *testing.T) {
 		t.Errorf("Path=%q Dirty=%v, want adopted path and clean state", wb.Path(), wb.Dirty())
 	}
 }
+
+func TestSaveAsAssumesXlsxWhenNoExtensionGiven(t *testing.T) {
+	app, wb := setupTestApp(t)
+	base := filepath.Join(t.TempDir(), "budget") // no extension
+
+	press(t, app, tea.Key{Code: 's', Mod: tea.ModCtrl})
+	typeText(t, app, base)
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	want := base + ".xlsx"
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("expected %s to exist: %v", want, err)
+	}
+	if wb.Path() != want {
+		t.Errorf("Path = %q, want %q", wb.Path(), want)
+	}
+}

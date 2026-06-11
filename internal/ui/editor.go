@@ -17,6 +17,15 @@ type editor struct {
 	mode   editMode
 	text   []rune
 	pos    int
+
+	// Point mode (Excel's reference picking): while a formula edit sits
+	// right after an operator, arrows/clicks select cells on the grid and
+	// the chosen reference is kept as a pending tail of the text, replaced
+	// on every move until it's locked by further typing or committed.
+	pointing    bool
+	pointAnchor position
+	pointPos    position
+	refStart    int // rune index where the pending reference begins
 }
 
 func (e *editor) start(initial string, mode editMode) {
@@ -57,6 +66,27 @@ func (e *editor) left()  { e.pos = max(e.pos-1, 0) }
 func (e *editor) right() { e.pos = min(e.pos+1, len(e.text)) }
 func (e *editor) home()  { e.pos = 0 }
 func (e *editor) end()   { e.pos = len(e.text) }
+
+// setPendingRef replaces the pending reference tail with ref. Pointing only
+// ever happens at the end of the text, so the pending reference is always
+// the suffix from refStart.
+func (e *editor) setPendingRef(ref string) {
+	e.text = append(e.text[:e.refStart], []rune(ref)...)
+	e.pos = len(e.text)
+}
+
+// lockPendingRef ends point mode keeping the reference text, so typing an
+// operator can continue the formula (and start a fresh point afterwards).
+func (e *editor) lockPendingRef() {
+	e.pointing = false
+}
+
+// clearPendingRef ends point mode and removes the pending reference.
+func (e *editor) clearPendingRef() {
+	e.text = e.text[:e.refStart]
+	e.pos = len(e.text)
+	e.pointing = false
+}
 
 // window returns the visible slice of the editor text for a cell of width w,
 // keeping the cursor in view, plus the cursor's offset within that slice.

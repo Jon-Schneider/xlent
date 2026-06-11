@@ -136,6 +136,12 @@ func (a *App) renderGrid(layout gridLayout) string {
 	var b strings.Builder
 	sel := rectBetween(a.anchor, a.cursor)
 
+	pointing := a.editor.active && a.editor.pointing
+	var pointed rect
+	if pointing {
+		pointed = rectBetween(a.editor.pointAnchor, a.editor.pointPos)
+	}
+
 	// Column header.
 	b.WriteString(styleHeader.Render(strings.Repeat(" ", layout.gutterW)))
 	for _, c := range layout.cols {
@@ -174,6 +180,8 @@ func (a *App) renderGrid(layout gridLayout) string {
 
 			style := styleCell
 			switch {
+			case pointing && pointed.contains(p):
+				style = stylePointedRef
 			case p == a.cursor:
 				style = styleCursorCell
 			case sel.contains(p):

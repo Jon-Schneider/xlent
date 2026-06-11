@@ -22,6 +22,11 @@ var (
 	styleCursorCell = lipgloss.NewStyle().
 			Reverse(true)
 
+	// The range being picked while pointing a formula reference.
+	stylePointedRef = lipgloss.NewStyle().
+			Background(lipgloss.Color("29")).
+			Foreground(lipgloss.Color("231"))
+
 	styleErrorValue = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("203")).
 			Bold(true)

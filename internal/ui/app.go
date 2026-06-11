@@ -112,10 +112,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if handled, model, cmd := a.handleMenuClick(tea.Mouse(msg)); handled {
 			return model, cmd
 		}
+		m := tea.Mouse(msg)
+		if m.Button == tea.MouseLeft && a.editorCanPoint() {
+			// Clicking a cell mid-formula inserts its reference, just like
+			// arrow pointing; dragging from here extends it to a range.
+			if row, col := a.layout.rowAt(m.Y), a.layout.colAt(m.X); row > 0 && col > 0 {
+				a.pointTo(position{Col: col, Row: row}, m.Mod.Contains(tea.ModShift))
+				return a, nil
+			}
+		}
 		if a.editor.active {
 			a.commitEdit(0, 0)
 		}
-		a.handleMouseClick(tea.Mouse(msg))
+		a.handleMouseClick(m)
 
 	case tea.MouseMotionMsg:
 		if tea.Mouse(msg).Button == tea.MouseLeft {
@@ -142,11 +151,16 @@ func (a *App) handleEditingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		a.commitEdit(-1, 0)
 	case "backspace":
+		if a.editor.pointing {
+			a.editor.clearPendingRef()
+			break
+		}
 		a.editor.backspace()
 	case "delete":
 		a.editor.deleteForward()
 	case "f2":
 		// Toggle between Excel's Enter and Edit modes.
+		a.editor.lockPendingRef()
 		if a.editor.mode == editModeReplace {
 			a.editor.mode = editModeInPlace
 		} else {
@@ -157,27 +171,119 @@ func (a *App) handleEditingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "end":
 		a.editor.end()
 	case "up":
+		if a.pointArrow(0, -1, false) {
+			break
+		}
 		a.commitEdit(0, -1)
 	case "down":
+		if a.pointArrow(0, 1, false) {
+			break
+		}
 		a.commitEdit(0, 1)
 	case "left":
+		if a.pointArrow(-1, 0, false) {
+			break
+		}
 		if a.editor.mode == editModeInPlace {
 			a.editor.left()
 		} else {
 			a.commitEdit(-1, 0)
 		}
 	case "right":
+		if a.pointArrow(1, 0, false) {
+			break
+		}
 		if a.editor.mode == editModeInPlace {
 			a.editor.right()
 		} else {
 			a.commitEdit(1, 0)
 		}
+	case "shift+up":
+		a.pointArrow(0, -1, true)
+	case "shift+down":
+		a.pointArrow(0, 1, true)
+	case "shift+left":
+		a.pointArrow(-1, 0, true)
+	case "shift+right":
+		a.pointArrow(1, 0, true)
 	default:
 		if msg.Text != "" {
+			// Typing locks any pointed reference in place and continues
+			// the formula after it.
+			a.editor.lockPendingRef()
 			a.editor.insert(msg.Text)
 		}
 	}
 	return a, nil
+}
+
+// editorCanPoint reports whether grid pointing may start or continue: a
+// formula edit in Enter mode whose insertion point sits where a reference
+// can begin (right after = or an operator), or one already pointing.
+func (a *App) editorCanPoint() bool {
+	e := &a.editor
+	if !e.active || e.mode != editModeReplace {
+		return false
+	}
+	if len(e.text) == 0 || e.text[0] != '=' {
+		return false
+	}
+	if e.pointing {
+		return true
+	}
+	if e.pos != len(e.text) {
+		return false
+	}
+	return strings.ContainsRune("=+-*/^&(,:;<> ", e.text[len(e.text)-1])
+}
+
+// pointArrow moves the reference picker by one step, starting point mode
+// from the edited cell if eligible. extend keeps the range anchor (Shift),
+// like extending a selection. Reports whether the key was consumed.
+func (a *App) pointArrow(dCol, dRow int, extend bool) bool {
+	if !a.editorCanPoint() {
+		return false
+	}
+	e := &a.editor
+	base := a.cursor
+	if e.pointing {
+		base = e.pointPos
+	}
+	np := position{
+		Col: clamp(base.Col+dCol, 1, engine.MaxCols),
+		Row: clamp(base.Row+dRow, 1, engine.MaxRows),
+	}
+	if !e.pointing {
+		e.pointing = true
+		e.refStart = len(e.text)
+		e.pointAnchor = np
+	} else if !extend {
+		e.pointAnchor = np
+	}
+	e.pointPos = np
+	a.applyPendingRef()
+	return true
+}
+
+// pointTo aims the reference picker at an absolute cell (mouse pointing).
+// extend keeps the anchor for drag-ranges.
+func (a *App) pointTo(p position, extend bool) {
+	e := &a.editor
+	if !e.pointing {
+		e.pointing = true
+		e.refStart = len(e.text)
+		e.pointAnchor = p
+	} else if !extend {
+		e.pointAnchor = p
+	}
+	e.pointPos = p
+	a.applyPendingRef()
+}
+
+func (a *App) applyPendingRef() {
+	e := &a.editor
+	e.setPendingRef(rectBetween(e.pointAnchor, e.pointPos).String())
+	a.scrollIntoView(e.pointPos)
 }
 
 // requestWithDirtyCheck runs a destructive-to-unsaved-work action, asking
@@ -496,7 +602,7 @@ func (a *App) setCursor(p position, extend bool) {
 	if !extend {
 		a.anchor = p
 	}
-	a.scrollCursorIntoView()
+	a.scrollIntoView(a.cursor)
 }
 
 // jumpCursor implements Ctrl+Arrow data-region jumps, Excel-style: from
@@ -571,7 +677,7 @@ func (a *App) selectUsedRange() {
 	}
 	a.anchor = position{Col: 1, Row: 1}
 	a.cursor = position{Col: maxCol, Row: maxRow}
-	a.scrollCursorIntoView()
+	a.scrollIntoView(a.cursor)
 }
 
 func (a *App) switchSheet(delta int) {
@@ -590,19 +696,19 @@ func (a *App) switchSheet(delta int) {
 	}
 }
 
-func (a *App) scrollCursorIntoView() {
+func (a *App) scrollIntoView(p position) {
 	layout := a.computeLayout()
 
-	if a.cursor.Row < a.topRow {
-		a.topRow = a.cursor.Row
-	} else if a.cursor.Row > a.topRow+layout.rows-1 {
-		a.topRow = a.cursor.Row - layout.rows + 1
+	if p.Row < a.topRow {
+		a.topRow = p.Row
+	} else if p.Row > a.topRow+layout.rows-1 {
+		a.topRow = p.Row - layout.rows + 1
 	}
 
-	if a.cursor.Col < a.leftCol {
-		a.leftCol = a.cursor.Col
+	if p.Col < a.leftCol {
+		a.leftCol = p.Col
 	} else {
-		for a.cursor.Col > a.lastFullyVisibleCol(a.computeLayout()) && a.leftCol < a.cursor.Col {
+		for p.Col > a.lastFullyVisibleCol(a.computeLayout()) && a.leftCol < p.Col {
 			a.leftCol++
 		}
 	}
@@ -658,11 +764,16 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 	}
 }
 
-// extendTo grows the selection toward the cell under a drag.
+// extendTo grows the selection — or the pointed reference, while a formula
+// edit is picking one — toward the cell under a drag.
 func (a *App) extendTo(m tea.Mouse) {
 	row := a.layout.rowAt(m.Y)
 	col := a.layout.colAt(m.X)
 	if row == 0 || col == 0 {
+		return
+	}
+	if a.editor.active && a.editor.pointing {
+		a.pointTo(position{Col: col, Row: row}, true)
 		return
 	}
 	a.setCursor(position{Col: col, Row: row}, true)
@@ -796,6 +907,9 @@ func (a *App) renderStatusBar(width int) string {
 	right := "Ready"
 	if a.extendMode {
 		right = "Extend"
+	}
+	if a.editor.active && a.editor.pointing {
+		right = "Point"
 	}
 	if a.statusMsg != "" {
 		right = a.statusMsg

@@ -9,8 +9,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/Jon-Schneider/xl/internal/clipboard"
 	"github.com/Jon-Schneider/xl/internal/document"
 	"github.com/Jon-Schneider/xl/internal/engine"
+	"github.com/Jon-Schneider/xl/internal/undo"
 )
 
 // App is the root Bubble Tea model for xl.
@@ -28,6 +30,11 @@ type App struct {
 	leftCol int // first visible sheet column
 
 	layout gridLayout // geometry of the last render, for mouse hit-testing
+
+	editor    editor
+	prompt    prompt
+	undoStack *undo.Stack
+	register  clipboard.Register
 
 	// keyboardEnhanced reports whether the terminal supports the kitty
 	// keyboard protocol (Tier 1 in the spec). When false, shortcuts like
@@ -53,12 +60,13 @@ func NewApp(path string) (*App, error) {
 	}
 
 	return &App{
-		wb:      wb,
-		sheet:   wb.Sheets()[0],
-		cursor:  position{Col: 1, Row: 1},
-		anchor:  position{Col: 1, Row: 1},
-		topRow:  1,
-		leftCol: 1,
+		wb:        wb,
+		sheet:     wb.Sheets()[0],
+		cursor:    position{Col: 1, Row: 1},
+		anchor:    position{Col: 1, Row: 1},
+		topRow:    1,
+		leftCol:   1,
+		undoStack: undo.NewStack(),
 	}, nil
 }
 
@@ -76,9 +84,28 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.keyboardEnhanced = true
 
 	case tea.KeyPressMsg:
-		return a.handleKey(msg)
+		switch {
+		case a.prompt.active():
+			return a.handlePromptKey(msg)
+		case a.editor.active:
+			return a.handleEditingKey(msg)
+		default:
+			return a.handleKey(msg)
+		}
+
+	case tea.PasteMsg:
+		if a.editor.active {
+			a.editor.insert(strings.ReplaceAll(msg.Content, "\n", " "))
+		} else if a.prompt.active() && !a.prompt.isConfirm() {
+			a.prompt.insert(strings.TrimSpace(msg.Content))
+		} else {
+			a.pasteExternal(msg.Content)
+		}
 
 	case tea.MouseClickMsg:
+		if a.editor.active {
+			a.commitEdit(0, 0)
+		}
 		a.handleMouseClick(tea.Mouse(msg))
 
 	case tea.MouseMotionMsg:
@@ -92,10 +119,158 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, nil
 }
 
+// handleEditingKey processes keys while the in-cell editor is open.
+func (a *App) handleEditingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		a.cancelEdit()
+	case "enter":
+		a.commitEdit(0, 1)
+	case "shift+enter":
+		a.commitEdit(0, -1)
+	case "tab":
+		a.commitEdit(1, 0)
+	case "shift+tab":
+		a.commitEdit(-1, 0)
+	case "backspace":
+		a.editor.backspace()
+	case "delete":
+		a.editor.deleteForward()
+	case "f2":
+		// Toggle between Excel's Enter and Edit modes.
+		if a.editor.mode == editModeReplace {
+			a.editor.mode = editModeInPlace
+		} else {
+			a.editor.mode = editModeReplace
+		}
+	case "home":
+		a.editor.home()
+	case "end":
+		a.editor.end()
+	case "up":
+		a.commitEdit(0, -1)
+	case "down":
+		a.commitEdit(0, 1)
+	case "left":
+		if a.editor.mode == editModeInPlace {
+			a.editor.left()
+		} else {
+			a.commitEdit(-1, 0)
+		}
+	case "right":
+		if a.editor.mode == editModeInPlace {
+			a.editor.right()
+		} else {
+			a.commitEdit(1, 0)
+		}
+	default:
+		if msg.Text != "" {
+			a.editor.insert(msg.Text)
+		}
+	}
+	return a, nil
+}
+
+// handlePromptKey processes keys while the status-line prompt is open.
+func (a *App) handlePromptKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if a.prompt.isConfirm() {
+		switch msg.String() {
+		case "y", "Y":
+			kind := a.prompt.kind
+			a.prompt.close()
+			if a.wb.Path() == "" {
+				a.prompt.open(promptSaveAs, "Save as: ", "")
+				a.prompt.quitAfter = kind == promptConfirmQuit
+				return a, nil
+			}
+			if err := a.wb.Save(); err != nil {
+				a.statusMsg = err.Error()
+				return a, nil
+			}
+			if kind == promptConfirmQuit {
+				return a, tea.Quit
+			}
+			a.prompt.open(promptOpen, "Open: ", "")
+		case "n", "N":
+			kind := a.prompt.kind
+			a.prompt.close()
+			if kind == promptConfirmQuit {
+				return a, tea.Quit
+			}
+			a.prompt.open(promptOpen, "Open: ", "")
+		case "esc", "ctrl+c":
+			a.prompt.close()
+		}
+		return a, nil
+	}
+
+	switch msg.String() {
+	case "esc", "ctrl+c":
+		a.prompt.close()
+	case "enter":
+		return a.submitPrompt()
+	case "backspace":
+		a.prompt.backspace()
+	case "left":
+		a.prompt.left()
+	case "right":
+		a.prompt.right()
+	default:
+		if msg.Text != "" {
+			a.prompt.insert(msg.Text)
+		}
+	}
+	return a, nil
+}
+
 func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	a.statusMsg = ""
+
 	switch msg.String() {
 	case "ctrl+q":
+		if a.wb.Dirty() {
+			a.prompt.open(promptConfirmQuit, "Save changes before quitting? (y/n, esc to cancel)", "")
+			return a, nil
+		}
 		return a, tea.Quit
+
+	case "ctrl+s":
+		a.save()
+	case "ctrl+shift+s":
+		a.prompt.open(promptSaveAs, "Save as: ", a.wb.Path())
+	case "ctrl+o":
+		if a.wb.Dirty() {
+			a.prompt.open(promptConfirmOpen, "Save changes before opening? (y/n, esc to cancel)", "")
+		} else {
+			a.prompt.open(promptOpen, "Open: ", "")
+		}
+
+	case "ctrl+z":
+		a.undo()
+	case "ctrl+y", "ctrl+shift+z":
+		a.redo()
+
+	case "ctrl+c":
+		return a, a.copySelection(false)
+	case "ctrl+x":
+		return a, a.copySelection(true)
+	case "ctrl+v":
+		a.pasteFromRegister()
+
+	case "f2":
+		a.editor.start(a.wb.RawContent(a.sheet, a.cursor.cellName()), editModeInPlace)
+
+	case "enter":
+		a.moveCursor(0, 1, false)
+	case "shift+enter":
+		a.moveCursor(0, -1, false)
+	case "tab":
+		a.moveCursor(1, 0, false)
+	case "shift+tab":
+		a.moveCursor(-1, 0, false)
+
+	case "backspace", "delete":
+		a.clearSelection()
 
 	case "f8":
 		a.extendMode = !a.extendMode
@@ -156,6 +331,14 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+a":
 		a.selectUsedRange()
+
+	default:
+		// Plain typing starts an edit that replaces the cell (Excel's
+		// non-modal entry). Modified keys never carry Text.
+		if msg.Text != "" {
+			a.editor.start("", editModeReplace)
+			a.editor.insert(msg.Text)
+		}
 	}
 	return a, nil
 }
@@ -376,13 +559,44 @@ func (a *App) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = a.windowTitle()
+	a.placeCursor(&v)
 	return v
+}
+
+// placeCursor shows the terminal cursor inside the active cell while
+// editing, or in the prompt line while one is open.
+func (a *App) placeCursor(v *tea.View) {
+	switch {
+	case a.prompt.active() && !a.prompt.isConfirm():
+		v.Cursor = tea.NewCursor(1+len(a.prompt.label)+a.prompt.pos, max(a.height, 6)-1)
+
+	case a.editor.active:
+		colIdx := -1
+		for i, c := range a.layout.cols {
+			if c == a.cursor.Col {
+				colIdx = i
+				break
+			}
+		}
+		row := a.cursor.Row
+		if colIdx < 0 || row < a.layout.topRow || row > a.layout.topRow+a.layout.rows-1 {
+			return
+		}
+		w := a.colWidth(a.cursor.Col) - 2
+		_, offset := a.editor.window(w)
+		x := a.layout.colX[colIdx] + 1 + offset
+		y := a.layout.gridY0 + (row - a.layout.topRow)
+		v.Cursor = tea.NewCursor(x, y)
+	}
 }
 
 func (a *App) renderFormulaBar(width int) string {
 	ref := " " + a.cursor.cellName() + " "
-	content := " " + a.wb.RawContent(a.sheet, a.cursor.cellName())
-	bar := styleFormulaBarRef.Render(ref) + styleFormulaBar.Render(content)
+	raw := a.wb.RawContent(a.sheet, a.cursor.cellName())
+	if a.editor.active {
+		raw = a.editor.String()
+	}
+	bar := styleFormulaBarRef.Render(ref) + styleFormulaBar.Render(" "+raw)
 	pad := width - lipgloss.Width(bar)
 	if pad > 0 {
 		bar += styleFormulaBar.Render(strings.Repeat(" ", pad))
@@ -411,6 +625,15 @@ func (a *App) renderTabs(width int) string {
 }
 
 func (a *App) renderStatusBar(width int) string {
+	// An open prompt takes over the status line.
+	if a.prompt.active() {
+		line := " " + a.prompt.label + a.prompt.String()
+		if pad := width - lipgloss.Width(line); pad > 0 {
+			line += strings.Repeat(" ", pad)
+		}
+		return styleFormulaBar.Render(line)
+	}
+
 	name := a.wb.Path()
 	if name == "" {
 		name = "[untitled]"
@@ -425,6 +648,9 @@ func (a *App) renderStatusBar(width int) string {
 
 	sel := rectBetween(a.anchor, a.cursor)
 	middle := sel.String()
+	if stats := a.selectionStats(); stats != "" {
+		middle += "   " + stats
+	}
 
 	right := "Ready"
 	if a.extendMode {

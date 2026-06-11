@@ -159,6 +159,17 @@ func (a *App) renderGrid(layout gridLayout) string {
 
 		for _, c := range layout.cols {
 			p := position{Col: c, Row: row}
+			w := a.colWidth(c)
+
+			// While editing, the active cell shows the raw editor text with
+			// the real terminal cursor (placed by placeCursor), so no
+			// reverse-video style here.
+			if a.editor.active && p == a.cursor {
+				visible, _ := a.editor.window(w - 2)
+				b.WriteString(styleCell.Width(w).MaxWidth(w).Align(lipgloss.Left).Padding(0, 1).Render(visible))
+				continue
+			}
+
 			value := a.wb.DisplayValue(a.sheet, p.cellName())
 
 			style := styleCell
@@ -176,7 +187,6 @@ func (a *App) renderGrid(layout gridLayout) string {
 				align = lipgloss.Right
 			}
 
-			w := a.colWidth(c)
 			b.WriteString(style.Width(w).MaxWidth(w).Align(align).Padding(0, 1).Render(value))
 		}
 		if i < layout.rows-1 {

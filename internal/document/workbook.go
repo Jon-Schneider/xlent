@@ -276,6 +276,23 @@ func (w *Workbook) IsEmpty(sheet, cellName string) bool {
 	return w.RawContent(sheet, cellName) == ""
 }
 
+// ColWidth returns a column's display width in terminal cells, derived from
+// the width stored in the file (Excel character units, which map closely to
+// monospace cells). Columns without an explicit width get fallback.
+func (w *Workbook) ColWidth(sheet string, col, fallback int) int {
+	name := engine.ColumnName(col)
+	width, err := w.file.GetColWidth(sheet, name)
+	if err != nil {
+		return fallback
+	}
+	// GetColWidth reports the sheet default (≈9.14) for unset columns;
+	// treat anything close to it as "no explicit width".
+	if math.Abs(width-9.140625) < 0.01 {
+		return fallback
+	}
+	return min(max(int(width+1), 4), 40)
+}
+
 // node validates and canonicalizes a cell name, returning the graph node and
 // the normalized A1 name.
 func (w *Workbook) node(sheet, cellName string) (engine.Node, string, error) {

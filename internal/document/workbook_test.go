@@ -195,6 +195,30 @@ func TestUsedRangeTracksExtent(t *testing.T) {
 	}
 }
 
+func TestColWidthHonorsFileWidthsAndFallsBack(t *testing.T) {
+	w := New()
+	defer w.Close()
+	sheet := w.Sheets()[0]
+
+	if got := w.ColWidth(sheet, 1, 10); got != 10 {
+		t.Errorf("unset column width = %d, want fallback 10", got)
+	}
+
+	if err := w.file.SetColWidth(sheet, "B", "B", 20); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.ColWidth(sheet, 2, 10); got != 21 {
+		t.Errorf("explicit column width = %d, want 21 (20 + padding)", got)
+	}
+
+	if err := w.file.SetColWidth(sheet, "C", "C", 200); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.ColWidth(sheet, 3, 10); got != 40 {
+		t.Errorf("huge column width = %d, want clamped to 40", got)
+	}
+}
+
 func mustSetCell(t *testing.T, w *Workbook, sheet, cell, input string) {
 	t.Helper()
 	if err := w.SetCell(sheet, cell, input); err != nil {

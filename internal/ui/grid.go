@@ -81,7 +81,7 @@ func (l gridLayout) rowAt(y int) int {
 }
 
 func (a *App) colWidth(col int) int {
-	return defaultColWidth
+	return a.wb.ColWidth(a.sheet, col, defaultColWidth)
 }
 
 // computeLayout sizes the chrome and works out which columns and rows fit.

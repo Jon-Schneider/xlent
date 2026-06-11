@@ -25,7 +25,8 @@ func Load(path string) (*Workbook, error) {
 	case ".xlsx", ".xlsm", ".xltm", ".xltx":
 		f, err := excelize.OpenFile(path)
 		if err != nil {
-			return nil, fmt.Errorf("open %s: %w", path, err)
+			// excelize's error already names the path.
+			return nil, err
 		}
 		w := newWorkbook(f)
 		w.path = path

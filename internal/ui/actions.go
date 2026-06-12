@@ -298,6 +298,7 @@ func (a *App) undo() {
 		a.statusMsg = err.Error()
 		return
 	}
+	a.ensureValidSheet()
 	a.statusMsg = "Undid " + label
 }
 
@@ -311,6 +312,7 @@ func (a *App) redo() {
 		a.statusMsg = err.Error()
 		return
 	}
+	a.ensureValidSheet()
 	a.statusMsg = "Redid " + label
 }
 
@@ -370,8 +372,65 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 
 	case promptGoTo:
 		a.goToRef(text)
+
+	case promptRenameSheet:
+		a.renameSheet(text)
 	}
 	return a, nil
+}
+
+// renameSheet renames the active sheet as one snapshot-undoable command.
+func (a *App) renameSheet(newName string) {
+	oldName := a.sheet
+	if newName == "" || newName == oldName {
+		return
+	}
+	if a.structuralOp("Rename Sheet", func() error {
+		return a.wb.RenameSheet(oldName, newName)
+	}) {
+		a.sheet = newName
+		a.statusMsg = fmt.Sprintf("Renamed %s to %s", oldName, newName)
+	}
+}
+
+// deleteSheet removes the active sheet and lands on its neighbor. No
+// confirmation: the command is snapshot-undoable.
+func (a *App) deleteSheet() {
+	sheets := a.wb.Sheets()
+	if len(sheets) <= 1 {
+		a.statusMsg = "Can't delete the only sheet"
+		return
+	}
+	idx := 0
+	for i, s := range sheets {
+		if s == a.sheet {
+			idx = i
+			break
+		}
+	}
+	deleted := a.sheet
+	if a.structuralOp("Delete Sheet", func() error {
+		return a.wb.DeleteSheet(deleted)
+	}) {
+		remaining := a.wb.Sheets()
+		a.sheet = remaining[min(idx, len(remaining)-1)]
+		a.cursor, a.anchor = position{Col: 1, Row: 1}, position{Col: 1, Row: 1}
+		a.topRow, a.leftCol = 1, 1
+		a.statusMsg = "Deleted " + deleted
+	}
+}
+
+// ensureValidSheet repoints the app at a real sheet after an operation that
+// can remove or rename the active one (undoing a rename, redoing a delete).
+func (a *App) ensureValidSheet() {
+	for _, s := range a.wb.Sheets() {
+		if s == a.sheet {
+			return
+		}
+	}
+	a.sheet = a.wb.Sheets()[0]
+	a.cursor, a.anchor = position{Col: 1, Row: 1}, position{Col: 1, Row: 1}
+	a.topRow, a.leftCol = 1, 1
 }
 
 // findNext moves the cursor to the next cell whose content or displayed

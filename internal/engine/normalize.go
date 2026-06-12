@@ -18,6 +18,37 @@ import (
 // The leading "=" is optional and preserved. sheets may be nil when no
 // workbook context is available.
 func NormalizeFormula(formula string, sheets []string) string {
+	return renderNormalized(formula, func(ref string) string {
+		return normalizeRefText(ref, sheets)
+	})
+}
+
+// RenameSheetRefs rewrites every reference qualified with oldName to use
+// newName instead, reporting whether anything changed. Excel does this when
+// a sheet is renamed; excelize does not, so the document layer calls this
+// for every formula after a rename. Unqualified references are untouched —
+// they already follow their own sheet implicitly.
+func RenameSheetRefs(formula, oldName, newName string) (string, bool) {
+	changed := false
+	out := renderNormalized(formula, func(ref string) string {
+		i := strings.LastIndex(ref, "!")
+		if i < 0 || !strings.EqualFold(unquoteSheetName(ref[:i]), oldName) {
+			return ref
+		}
+		changed = true
+		return quoteSheetNameIfNeeded(newName) + ref[i:]
+	})
+	if !changed {
+		return formula, false
+	}
+	return out, true
+}
+
+// renderNormalized is the shared formula renderer: it tokenizes with efp and
+// re-renders by hand (efp's own Render does not re-escape quotes inside
+// string literals, which would corrupt ="say ""hi"""), applying normalize
+// rules and mapRef to each reference operand.
+func renderNormalized(formula string, mapRef func(string) string) string {
 	body, hadEquals := strings.CutPrefix(formula, "=")
 	body = closeUnterminatedString(body)
 
@@ -26,9 +57,6 @@ func NormalizeFormula(formula string, sheets []string) string {
 	if hadEquals {
 		b.WriteByte('=')
 	}
-	// Re-render by hand rather than with parser.Render: efp does not
-	// re-escape quotes inside string literals, which would corrupt
-	// ="say ""hi""" on the way back out.
 	depth := 0
 	for _, t := range parser.Parse(body) {
 		switch {
@@ -52,7 +80,7 @@ func NormalizeFormula(formula string, sheets []string) string {
 		case t.TType == efp.TokenTypeOperand && t.TSubType == efp.TokenSubTypeLogical:
 			b.WriteString(strings.ToUpper(t.TValue))
 		case t.TType == efp.TokenTypeOperand && t.TSubType == efp.TokenSubTypeRange:
-			b.WriteString(normalizeRefText(t.TValue, sheets))
+			b.WriteString(mapRef(t.TValue))
 		case t.TType == efp.TokenTypeOperatorInfix && t.TSubType == efp.TokenSubTypeIntersection:
 			b.WriteByte(' ')
 		default:

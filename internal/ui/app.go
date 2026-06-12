@@ -433,6 +433,10 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.switchSheet(1)
 	case actAddSheet:
 		a.addSheet()
+	case actRenameSheet:
+		a.prompt.open(promptRenameSheet, "Rename sheet: ", a.sheet)
+	case actDeleteSheet:
+		a.deleteSheet()
 	case actAbout:
 		a.statusMsg = "xl — an Excel-style terminal spreadsheet. F10 or click for menus."
 	}

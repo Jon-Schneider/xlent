@@ -34,6 +34,8 @@ const (
 	actPrevSheet
 	actNextSheet
 	actAddSheet
+	actRenameSheet
+	actDeleteSheet
 	actAbout
 )
 
@@ -84,6 +86,8 @@ func defaultMenus() []menu {
 			{label: "Next Sheet", shortcut: "Ctrl+PgDn", action: actNextSheet},
 			divider,
 			{label: "New Sheet", action: actAddSheet},
+			{label: "Rename Sheet…", action: actRenameSheet},
+			{label: "Delete Sheet", action: actDeleteSheet},
 		}},
 		{title: "Help", items: []menuItem{
 			{label: "About xl", action: actAbout},

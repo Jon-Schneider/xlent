@@ -10,6 +10,7 @@ const (
 	promptOpen
 	promptFind
 	promptGoTo
+	promptRenameSheet
 	promptConfirmDirty // "Save changes before <pending>? (y/n)"
 )
 

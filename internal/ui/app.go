@@ -554,6 +554,22 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.prompt.open(promptFind, "Find: ", a.lastSearch)
 	case actGoTo:
 		a.prompt.open(promptGoTo, "Go to: ", "")
+	case actFmtGeneral:
+		a.applyNumberFormat(document.FormatGeneral, "General")
+	case actFmtNumber:
+		a.applyNumberFormat(document.FormatNumber, "Number")
+	case actFmtCurrency:
+		a.applyNumberFormat(document.FormatCurrency, "Currency")
+	case actFmtPercent:
+		a.applyNumberFormat(document.FormatPercent, "Percent")
+	case actFmtDate:
+		a.applyNumberFormat(document.FormatDate, "Date")
+	case actFmtTime:
+		a.applyNumberFormat(document.FormatTime, "Time")
+	case actFmtDateTime:
+		a.applyNumberFormat(document.FormatDateTime, "Date & Time")
+	case actFmtText:
+		a.applyNumberFormat(document.FormatText, "Text")
 	case actPrevSheet:
 		a.switchSheet(-1)
 	case actNextSheet:

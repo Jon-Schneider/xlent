@@ -292,6 +292,18 @@ func (a *App) deleteCols() {
 	}
 }
 
+// applyNumberFormat formats the selection as one snapshot-undoable command
+// (cell-edit replay records content, not styles, so formats undo by
+// snapshot like structural changes do).
+func (a *App) applyNumberFormat(f document.NumberFormat, label string) {
+	sel := rectBetween(a.anchor, a.cursor)
+	if a.structuralOp("Format "+label, func() error {
+		return a.wb.SetNumberFormat(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow, f)
+	}) {
+		a.statusMsg = "Formatted " + sel.String() + " as " + label
+	}
+}
+
 func (a *App) undo() {
 	label := a.undoStack.UndoLabel()
 	if label == "" {

@@ -106,7 +106,18 @@ func TestMenuItemClickExecutes(t *testing.T) {
 	app.View()
 
 	// Open View menu and click "New Sheet" (line 3: Prev, Next, divider, New).
-	x := app.menuBar.titleX[2][0]
+	// The menu is located by title so adding menus doesn't shift this test.
+	viewIdx := -1
+	for i, m := range app.menus {
+		if m.title == "View" {
+			viewIdx = i
+			break
+		}
+	}
+	if viewIdx < 0 {
+		t.Fatal("no View menu in the menu bar")
+	}
+	x := app.menuBar.titleX[viewIdx][0]
 	app.Update(tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft})
 	app.View()
 	app.Update(tea.MouseClickMsg{X: app.menuBar.dropX + 1, Y: 1 + 3, Button: tea.MouseLeft})

@@ -31,6 +31,14 @@ const (
 	actSelectAll
 	actFind
 	actGoTo
+	actFmtGeneral
+	actFmtNumber
+	actFmtCurrency
+	actFmtPercent
+	actFmtDate
+	actFmtTime
+	actFmtDateTime
+	actFmtText
 	actPrevSheet
 	actNextSheet
 	actAddSheet
@@ -80,6 +88,18 @@ func defaultMenus() []menu {
 			{label: "Go To…", shortcut: "Ctrl+G", action: actGoTo},
 			divider,
 			{label: "Select All", shortcut: "Ctrl+A", action: actSelectAll},
+		}},
+		{title: "Format", items: []menuItem{
+			{label: "General", action: actFmtGeneral},
+			{label: "Number", action: actFmtNumber},
+			{label: "Currency", action: actFmtCurrency},
+			{label: "Percent", action: actFmtPercent},
+			divider,
+			{label: "Date", action: actFmtDate},
+			{label: "Time", action: actFmtTime},
+			{label: "Date & Time", action: actFmtDateTime},
+			divider,
+			{label: "Text", action: actFmtText},
 		}},
 		{title: "View", items: []menuItem{
 			{label: "Previous Sheet", shortcut: "Ctrl+PgUp", action: actPrevSheet},

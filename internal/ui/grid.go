@@ -136,7 +136,12 @@ func (a *App) renderGrid(layout gridLayout) string {
 	var b strings.Builder
 	sel := rectBetween(a.anchor, a.cursor)
 
-	pointing := a.editor.active && a.editor.pointing
+	// The pointed-reference highlight belongs to the sheet it was picked on;
+	// the cursor, selection, and in-cell editor belong to the sheet the edit
+	// started on. While cross-sheet pointing displays another sheet, neither
+	// must paint onto coordinates that merely look the same.
+	pointing := a.editor.active && a.editor.pointing && a.editor.pointSheet == a.sheet
+	onEditSheet := !a.editor.active || a.editOrigin.sheet == a.sheet
 	var pointed rect
 	if pointing {
 		pointed = rectBetween(a.editor.pointAnchor, a.editor.pointPos)
@@ -170,7 +175,7 @@ func (a *App) renderGrid(layout gridLayout) string {
 			// While editing, the active cell shows the raw editor text with
 			// the real terminal cursor (placed by placeCursor), so no
 			// reverse-video style here.
-			if a.editor.active && p == a.cursor {
+			if a.editor.active && onEditSheet && p == a.cursor {
 				visible, _ := a.editor.window(w - 2)
 				b.WriteString(styleCell.Width(w).MaxWidth(w).Align(lipgloss.Left).Padding(0, 1).Render(visible))
 				continue
@@ -182,9 +187,9 @@ func (a *App) renderGrid(layout gridLayout) string {
 			switch {
 			case pointing && pointed.contains(p):
 				style = stylePointedRef
-			case p == a.cursor:
+			case onEditSheet && p == a.cursor:
 				style = styleCursorCell
-			case sel.contains(p):
+			case onEditSheet && sel.contains(p):
 				style = styleCellSelected
 			case isErrorValue(value):
 				style = styleErrorValue

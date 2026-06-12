@@ -20,8 +20,11 @@ import (
 const statsCellLimit = 50_000
 
 // commitEdit applies the editor's text to the active cell as one undoable
-// command, then moves the cursor by (dCol, dRow).
+// command, then moves the cursor by (dCol, dRow). The edit's origin sheet
+// and viewport come back first: cross-sheet pointing may have wandered, and
+// the content belongs to the cell where the edit started.
 func (a *App) commitEdit(dCol, dRow int) {
+	a.restoreEditOrigin()
 	cell := a.cursor.cellName()
 	before := a.wb.RawContent(a.sheet, cell)
 	after := a.editor.String()
@@ -42,6 +45,7 @@ func (a *App) commitEdit(dCol, dRow int) {
 }
 
 func (a *App) cancelEdit() {
+	a.restoreEditOrigin()
 	a.editor.stop()
 }
 
@@ -507,6 +511,7 @@ func (a *App) adoptWorkbook(wb *document.Workbook) {
 	a.topRow, a.leftCol = 1, 1
 	a.undoStack = undo.NewStack()
 	a.editor.stop()
+	a.editOrigin = editOrigin{}
 	a.statusMsg = ""
 }
 

@@ -94,15 +94,15 @@ func retargetRefText(ref, formulaSheet string, move MoveSpec) (newText string, o
 
 	qualifier := ""
 	if hadQualifier || !strings.EqualFold(move.ToSheet, formulaSheet) {
-		qualifier = quoteSheetNameIfNeeded(move.ToSheet) + "!"
+		qualifier = QuoteSheetName(move.ToSheet) + "!"
 	}
 	return qualifier + strings.Join(shifted, ":"), true
 }
 
-// quoteSheetNameIfNeeded wraps a sheet name in single quotes when a bare
+// QuoteSheetName wraps a sheet name in single quotes when a bare
 // reference to it would be ambiguous or unparsable (spaces, punctuation, or
 // a name that itself looks like a cell reference).
-func quoteSheetNameIfNeeded(s string) string {
+func QuoteSheetName(s string) string {
 	plain := s != ""
 	for i, r := range s {
 		if r == '_' || unicode.IsLetter(r) || (i > 0 && unicode.IsDigit(r)) {

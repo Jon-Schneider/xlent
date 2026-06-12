@@ -36,7 +36,7 @@ func RenameSheetRefs(formula, oldName, newName string) (string, bool) {
 			return ref
 		}
 		changed = true
-		return quoteSheetNameIfNeeded(newName) + ref[i:]
+		return QuoteSheetName(newName) + ref[i:]
 	})
 	if !changed {
 		return formula, false
@@ -130,7 +130,7 @@ func normalizeRefText(ref string, sheets []string) string {
 				break
 			}
 		}
-		qualifier = quoteSheetNameIfNeeded(name) + "!"
+		qualifier = QuoteSheetName(name) + "!"
 		body = ref[i+1:]
 	}
 

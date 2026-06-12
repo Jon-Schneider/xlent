@@ -25,7 +25,8 @@ type editor struct {
 	pointing    bool
 	pointAnchor position
 	pointPos    position
-	refStart    int // rune index where the pending reference begins
+	pointSheet  string // sheet the picked reference lives on
+	refStart    int    // rune index where the pending reference begins
 }
 
 func (e *editor) start(initial string, mode editMode) {

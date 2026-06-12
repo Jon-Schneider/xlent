@@ -56,6 +56,11 @@ type App struct {
 	// edge in the header row.
 	colResize colResize
 
+	// editOrigin records where the current edit began. Cross-sheet pointing
+	// can switch the displayed sheet mid-edit; commit and cancel return here
+	// so the entered content lands on the cell that was being edited.
+	editOrigin editOrigin
+
 	statusMsg string
 }
 
@@ -122,6 +127,18 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m := tea.Mouse(msg)
 		if m.Button == tea.MouseLeft && a.editorCanPoint() {
+			// Clicking a sheet tab mid-formula switches the displayed sheet
+			// for cross-sheet picking instead of committing the edit.
+			if m.Y == a.layout.tabsY {
+				for i, xr := range a.layout.tabX {
+					if m.X >= xr[0] && m.X < xr[1] {
+						if sheets := a.wb.Sheets(); i < len(sheets) {
+							a.pointSheetSwitchTo(sheets[i])
+						}
+						return a, nil
+					}
+				}
+			}
 			// Clicking a cell mid-formula inserts its reference, just like
 			// arrow pointing; dragging from here extends it to a range.
 			if row, col := a.layout.rowAt(m.Y), a.layout.colAt(m.X); row > 0 && col > 0 {
@@ -254,6 +271,10 @@ func (a *App) handleEditingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.pointArrow(-1, 0, true)
 	case "shift+right":
 		a.pointArrow(1, 0, true)
+	case "ctrl+pgup":
+		a.pointSheetSwitch(-1)
+	case "ctrl+pgdown":
+		a.pointSheetSwitch(1)
 	default:
 		if msg.Text != "" {
 			// Typing locks any pointed reference in place and continues
@@ -263,6 +284,60 @@ func (a *App) handleEditingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return a, nil
+}
+
+// editOrigin is the sheet and viewport an edit started from.
+type editOrigin struct {
+	sheet   string
+	topRow  int
+	leftCol int
+}
+
+// startEdit opens the in-cell editor, remembering where the edit began.
+func (a *App) startEdit(initial string, mode editMode) {
+	a.editOrigin = editOrigin{sheet: a.sheet, topRow: a.topRow, leftCol: a.leftCol}
+	a.editor.start(initial, mode)
+}
+
+// restoreEditOrigin returns the view to where the edit began (point mode may
+// have wandered to another sheet or scrolled away).
+func (a *App) restoreEditOrigin() {
+	if a.editOrigin.sheet == "" {
+		return
+	}
+	a.sheet = a.editOrigin.sheet
+	a.topRow, a.leftCol = a.editOrigin.topRow, a.editOrigin.leftCol
+	a.editOrigin = editOrigin{}
+}
+
+// pointSheetSwitch moves the displayed sheet by delta while a formula edit
+// is picking a reference, without touching the cursor or anchor (the normal
+// sheet switch resets both, which would wreck the edit in progress).
+func (a *App) pointSheetSwitch(delta int) {
+	if !a.editorCanPoint() {
+		return
+	}
+	sheets := a.wb.Sheets()
+	for i, s := range sheets {
+		if s == a.sheet {
+			next := clamp(i+delta, 0, len(sheets)-1)
+			a.pointSheetSwitchTo(sheets[next])
+			return
+		}
+	}
+}
+
+// pointSheetSwitchTo displays a sheet for reference picking. An already
+// pending reference keeps its coordinates and follows to the new sheet.
+func (a *App) pointSheetSwitchTo(sheet string) {
+	if sheet == a.sheet {
+		return
+	}
+	a.sheet = sheet
+	if a.editor.pointing {
+		a.editor.pointSheet = sheet
+		a.applyPendingRef()
+	}
 }
 
 // editorCanPoint reports whether grid pointing may start or continue: a
@@ -305,6 +380,7 @@ func (a *App) pointArrow(dCol, dRow int, extend bool) bool {
 		e.pointing = true
 		e.refStart = len(e.text)
 		e.pointAnchor = np
+		e.pointSheet = a.sheet
 	} else if !extend {
 		e.pointAnchor = np
 	}
@@ -321,6 +397,7 @@ func (a *App) pointTo(p position, extend bool) {
 		e.pointing = true
 		e.refStart = len(e.text)
 		e.pointAnchor = p
+		e.pointSheet = a.sheet
 	} else if !extend {
 		e.pointAnchor = p
 	}
@@ -330,7 +407,13 @@ func (a *App) pointTo(p position, extend bool) {
 
 func (a *App) applyPendingRef() {
 	e := &a.editor
-	e.setPendingRef(rectBetween(e.pointAnchor, e.pointPos).String())
+	ref := rectBetween(e.pointAnchor, e.pointPos).String()
+	// A reference picked on another sheet carries its qualifier; one on the
+	// edit's own sheet stays bare, like Excel writes them.
+	if e.pointSheet != "" && e.pointSheet != a.editOrigin.sheet {
+		ref = engine.QuoteSheetName(e.pointSheet) + "!" + ref
+	}
+	e.setPendingRef(ref)
 	a.scrollIntoView(e.pointPos)
 }
 
@@ -567,7 +650,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.pasteFromRegister()
 
 	case "f2":
-		a.editor.start(a.wb.RawContent(a.sheet, a.cursor.cellName()), editModeInPlace)
+		a.startEdit(a.wb.RawContent(a.sheet, a.cursor.cellName()), editModeInPlace)
 
 	case "enter":
 		a.moveCursor(0, 1, false)
@@ -660,7 +743,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		// Plain typing starts an edit that replaces the cell (Excel's
 		// non-modal entry). Modified keys never carry Text.
 		if msg.Text != "" {
-			a.editor.start("", editModeReplace)
+			a.startEdit("", editModeReplace)
 			a.editor.insert(msg.Text)
 		}
 	}
@@ -906,6 +989,11 @@ func (a *App) placeCursor(v *tea.View) {
 		v.Cursor = tea.NewCursor(1+len(a.prompt.label)+a.prompt.pos, max(a.height, 6)-1)
 
 	case a.editor.active:
+		if a.sheet != a.editOrigin.sheet {
+			// Cross-sheet pointing displays another sheet; the edited cell
+			// isn't on screen, so the terminal cursor stays hidden.
+			return
+		}
 		colIdx := -1
 		for i, c := range a.layout.cols {
 			if c == a.cursor.Col {

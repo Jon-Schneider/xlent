@@ -1015,11 +1015,17 @@ func (a *App) placeCursor(v *tea.View) {
 
 func (a *App) renderFormulaBar(width int) string {
 	ref := " " + a.cursor.cellName() + " "
-	raw := a.wb.RawContent(a.sheet, a.cursor.cellName())
+	var body string
 	if a.editor.active {
-		raw = a.editor.String()
+		if spans := a.formulaRefSpans(); len(spans) > 0 {
+			body = renderHighlightedFormula(a.editor.text, spans)
+		} else {
+			body = styleFormulaBar.Render(a.editor.String())
+		}
+	} else {
+		body = styleFormulaBar.Render(a.wb.RawContent(a.sheet, a.cursor.cellName()))
 	}
-	bar := styleFormulaBarRef.Render(ref) + styleFormulaBar.Render(" "+raw)
+	bar := styleFormulaBarRef.Render(ref) + styleFormulaBar.Render(" ") + body
 	pad := width - lipgloss.Width(bar)
 	if pad > 0 {
 		bar += styleFormulaBar.Render(strings.Repeat(" ", pad))

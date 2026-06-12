@@ -147,6 +147,10 @@ func (a *App) renderGrid(layout gridLayout) string {
 		pointed = rectBetween(a.editor.pointAnchor, a.editor.pointPos)
 	}
 
+	// Cells referenced by the formula being edited get tints matching their
+	// colors in the formula bar.
+	refSpans := a.formulaRefSpans()
+
 	// Column header.
 	b.WriteString(styleHeader.Render(strings.Repeat(" ", layout.gutterW)))
 	for _, c := range layout.cols {
@@ -184,9 +188,12 @@ func (a *App) renderGrid(layout gridLayout) string {
 			value := a.wb.DisplayValue(a.sheet, p.cellName())
 
 			style := styleCell
+			refTint, tinted := refTintAt(refSpans, a.sheet, p)
 			switch {
 			case pointing && pointed.contains(p):
 				style = stylePointedRef
+			case tinted:
+				style = refTint
 			case onEditSheet && p == a.cursor:
 				style = styleCursorCell
 			case onEditSheet && sel.contains(p):

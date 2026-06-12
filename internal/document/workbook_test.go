@@ -1,7 +1,10 @@
 package document
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 
 	"github.com/Jon-Schneider/xl/internal/engine"
 )
@@ -244,6 +247,69 @@ func TestRetargetReferencesUpdatesWatchersOnOtherSheets(t *testing.T) {
 	}
 	if got := w.DisplayValue("Data", "B2"); got != "20" {
 		t.Errorf("Data!B2 value = %q, want 20", got)
+	}
+}
+
+// Formula cells must render through the cell's number format exactly like
+// value cells do — excelize's CalcCellValue applies the format itself, and
+// these tests pin that behavior for the formats most likely to regress:
+// date serials (which would otherwise render as raw numbers) and currency.
+
+func TestFormulaCellHonorsDateNumberFormat(t *testing.T) {
+	w := New()
+	defer w.Close()
+	sheet := w.Sheets()[0]
+
+	dateStyle, err := w.file.NewStyle(&excelize.Style{NumFmt: 14}) // m/d/yyyy
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 45000 is the serial for 2023-03-15.
+	mustSetCell(t, w, sheet, "A1", "45000")
+	mustSetCell(t, w, sheet, "B1", "=A1+1")
+	mustSetCell(t, w, sheet, "C1", "45001")
+	for _, cell := range []string{"A1", "B1", "C1"} {
+		if err := w.file.SetCellStyle(sheet, cell, cell, dateStyle); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// excelize renders the m/d/yyyy built-in as "03-16-23"; the exact text
+	// matters less than that the serial was formatted as a date at all.
+	literal := w.DisplayValue(sheet, "C1")
+	if literal == "45001" || !strings.Contains(literal, "23") || len(literal) < 6 {
+		t.Fatalf("literal date cell C1 = %q, want a formatted date", literal)
+	}
+	if got := w.DisplayValue(sheet, "B1"); got != literal {
+		t.Errorf("formula date cell B1 = %q, want %q (same format as a literal)", got, literal)
+	}
+}
+
+func TestFormulaCellHonorsCurrencyNumberFormat(t *testing.T) {
+	w := New()
+	defer w.Close()
+	sheet := w.Sheets()[0]
+
+	currency := "$#,##0.00"
+	currencyStyle, err := w.file.NewStyle(&excelize.Style{CustomNumFmt: &currency})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mustSetCell(t, w, sheet, "A1", "1234.5")
+	mustSetCell(t, w, sheet, "B1", "=A1*2")
+	for _, cell := range []string{"A1", "B1"} {
+		if err := w.file.SetCellStyle(sheet, cell, cell, currencyStyle); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := w.DisplayValue(sheet, "A1"); got != "$1,234.50" {
+		t.Errorf("literal currency cell A1 = %q, want $1,234.50", got)
+	}
+	if got := w.DisplayValue(sheet, "B1"); got != "$2,469.00" {
+		t.Errorf("formula currency cell B1 = %q, want $2,469.00", got)
 	}
 }
 

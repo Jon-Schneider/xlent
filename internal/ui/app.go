@@ -409,6 +409,14 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.pasteFromRegister()
 	case actClear:
 		a.clearSelection()
+	case actInsertRows:
+		a.insertRows()
+	case actInsertCols:
+		a.insertCols()
+	case actDeleteRows:
+		a.deleteRows()
+	case actDeleteCols:
+		a.deleteCols()
 	case actSelectAll:
 		a.selectUsedRange()
 	case actPrevSheet:
@@ -576,6 +584,14 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+a":
 		a.selectUsedRange()
+
+	// Excel disambiguates row vs column insert/delete by whole-row/column
+	// selection, which our selection model doesn't track; the shortcut does
+	// rows (the common case) and the Edit menu covers columns.
+	case "ctrl++", "ctrl+=":
+		a.insertRows()
+	case "ctrl+-":
+		a.deleteRows()
 
 	default:
 		// Plain typing starts an edit that replaces the cell (Excel's

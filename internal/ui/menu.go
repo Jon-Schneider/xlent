@@ -24,6 +24,10 @@ const (
 	actCopy
 	actPaste
 	actClear
+	actInsertRows
+	actInsertCols
+	actDeleteRows
+	actDeleteCols
 	actSelectAll
 	actPrevSheet
 	actNextSheet
@@ -62,6 +66,11 @@ func defaultMenus() []menu {
 			{label: "Copy", shortcut: "Ctrl+C", action: actCopy},
 			{label: "Paste", shortcut: "Ctrl+V", action: actPaste},
 			{label: "Clear", shortcut: "Del", action: actClear},
+			divider,
+			{label: "Insert Rows", shortcut: "Ctrl++", action: actInsertRows},
+			{label: "Insert Columns", action: actInsertCols},
+			{label: "Delete Rows", shortcut: "Ctrl+-", action: actDeleteRows},
+			{label: "Delete Columns", action: actDeleteCols},
 			divider,
 			{label: "Select All", shortcut: "Ctrl+A", action: actSelectAll},
 		}},

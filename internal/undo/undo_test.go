@@ -132,6 +132,59 @@ func TestLabelsDescribeNextUndoAndRedo(t *testing.T) {
 	}
 }
 
+// snapshotCells is a CellWriter that also restores snapshots, recording
+// which snapshot bytes were applied.
+type snapshotCells struct {
+	inMemoryCells
+	restored [][]byte
+}
+
+func (m *snapshotCells) RestoreSnapshot(data []byte) error {
+	m.restored = append(m.restored, data)
+	return nil
+}
+
+func TestSnapshotCommandUndoesAndRedoesByRestoring(t *testing.T) {
+	cells := &snapshotCells{inMemoryCells: *newInMemoryCells()}
+	stack := NewStack()
+
+	stack.Record(Command{
+		Label:          "Insert Rows",
+		BeforeSnapshot: []byte("before"),
+		AfterSnapshot:  []byte("after"),
+	})
+
+	if err := stack.Undo(cells); err != nil {
+		t.Fatalf("Undo: %v", err)
+	}
+	if err := stack.Redo(cells); err != nil {
+		t.Fatalf("Redo: %v", err)
+	}
+
+	if len(cells.restored) != 2 ||
+		string(cells.restored[0]) != "before" || string(cells.restored[1]) != "after" {
+		t.Errorf("restored = %q, want before then after", cells.restored)
+	}
+	if len(cells.writeLog) != 0 {
+		t.Errorf("snapshot command must not replay cell edits, wrote %v", cells.writeLog)
+	}
+}
+
+func TestSnapshotCommandFailsCleanlyWithoutARestorer(t *testing.T) {
+	cells := newInMemoryCells()
+	stack := NewStack()
+
+	stack.Record(Command{
+		Label:          "Insert Rows",
+		BeforeSnapshot: []byte("before"),
+		AfterSnapshot:  []byte("after"),
+	})
+
+	if err := stack.Undo(cells); err == nil {
+		t.Error("Undo must report that the writer cannot restore snapshots")
+	}
+}
+
 func TestUndoReportsWriteFailuresButStillMovesCommand(t *testing.T) {
 	stack := NewStack()
 	stack.Record(Command{Label: "Edit", Edits: []CellEdit{

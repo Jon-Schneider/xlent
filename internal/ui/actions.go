@@ -215,6 +215,79 @@ func (a *App) pasteExternal(text string) {
 	a.undoStack.Record(undo.Command{Label: "Paste", Edits: edits})
 }
 
+// structuralOp runs a workbook-reshaping operation bracketed by snapshots so
+// it can be undone wholesale (cell-edit replay can't reverse structure
+// changes). A failed operation restores the before-snapshot rather than
+// leaving the workbook half-modified.
+func (a *App) structuralOp(label string, op func() error) bool {
+	before, err := a.wb.Snapshot()
+	if err != nil {
+		a.statusMsg = err.Error()
+		return false
+	}
+	if err := op(); err != nil {
+		a.statusMsg = err.Error()
+		if restoreErr := a.wb.RestoreSnapshot(before); restoreErr != nil {
+			a.statusMsg = restoreErr.Error()
+		}
+		return false
+	}
+	after, err := a.wb.Snapshot()
+	if err != nil {
+		a.statusMsg = err.Error()
+		return false
+	}
+	a.undoStack.Record(undo.Command{Label: label, BeforeSnapshot: before, AfterSnapshot: after})
+	return true
+}
+
+// insertRows inserts blank rows above the selection, one per selected row.
+func (a *App) insertRows() {
+	sel := rectBetween(a.anchor, a.cursor)
+	count := sel.MaxRow - sel.MinRow + 1
+	if a.structuralOp("Insert Rows", func() error {
+		return a.wb.InsertRows(a.sheet, sel.MinRow, count)
+	}) {
+		a.statusMsg = fmt.Sprintf("Inserted %d row(s)", count)
+	}
+}
+
+// insertCols inserts blank columns left of the selection, one per selected
+// column.
+func (a *App) insertCols() {
+	sel := rectBetween(a.anchor, a.cursor)
+	count := sel.MaxCol - sel.MinCol + 1
+	if a.structuralOp("Insert Columns", func() error {
+		return a.wb.InsertCols(a.sheet, sel.MinCol, count)
+	}) {
+		a.statusMsg = fmt.Sprintf("Inserted %d column(s)", count)
+	}
+}
+
+// deleteRows removes every row the selection touches.
+func (a *App) deleteRows() {
+	sel := rectBetween(a.anchor, a.cursor)
+	count := sel.MaxRow - sel.MinRow + 1
+	if a.structuralOp("Delete Rows", func() error {
+		return a.wb.RemoveRows(a.sheet, sel.MinRow, count)
+	}) {
+		a.setCursor(position{Col: a.cursor.Col, Row: sel.MinRow}, false)
+		a.statusMsg = fmt.Sprintf("Deleted %d row(s)", count)
+	}
+}
+
+// deleteCols removes every column the selection touches.
+func (a *App) deleteCols() {
+	sel := rectBetween(a.anchor, a.cursor)
+	count := sel.MaxCol - sel.MinCol + 1
+	if a.structuralOp("Delete Columns", func() error {
+		return a.wb.RemoveCols(a.sheet, sel.MinCol, count)
+	}) {
+		a.setCursor(position{Col: sel.MinCol, Row: a.cursor.Row}, false)
+		a.statusMsg = fmt.Sprintf("Deleted %d column(s)", count)
+	}
+}
+
 func (a *App) undo() {
 	label := a.undoStack.UndoLabel()
 	if label == "" {

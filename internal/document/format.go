@@ -5,7 +5,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	"github.com/Jon-Schneider/xl/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
 // NumberFormat selects how a cell's value renders: a built-in xlsx numFmt ID

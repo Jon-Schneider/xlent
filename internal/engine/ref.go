@@ -1,4 +1,4 @@
-// Package engine provides the formula dependency machinery for xl: parsing
+// Package engine provides the formula dependency machinery for xlent: parsing
 // A1-style references, extracting references from formulas, and a dependency
 // graph that yields incremental recalculation order with cycle detection.
 //

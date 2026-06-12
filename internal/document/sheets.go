@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Jon-Schneider/xl/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
 // ErrLastSheet is returned when deleting a sheet would leave the workbook

@@ -1,4 +1,4 @@
-module github.com/Jon-Schneider/xl
+module github.com/Jon-Schneider/xlent
 
 go 1.25.0
 

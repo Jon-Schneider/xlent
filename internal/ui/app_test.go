@@ -7,7 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/Jon-Schneider/xl/internal/document"
+	"github.com/Jon-Schneider/xlent/internal/document"
 )
 
 // setupTestApp returns an app over an in-memory workbook sized to a small

@@ -6,7 +6,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"github.com/Jon-Schneider/xl/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
 const defaultColWidth = 10

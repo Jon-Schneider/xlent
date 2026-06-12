@@ -11,7 +11,7 @@ import (
 //
 // Tokens that look like operands but do not parse as A1 references (defined
 // names, external workbook references) are skipped: they cannot participate
-// in xl's dependency graph, and excelize still evaluates them.
+// in xlent's dependency graph, and excelize still evaluates them.
 func ExtractRefs(defaultSheet, formula string) []Ref {
 	formula = strings.TrimPrefix(formula, "=")
 	parser := efp.ExcelParser()

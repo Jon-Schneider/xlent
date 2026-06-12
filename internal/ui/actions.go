@@ -9,10 +9,10 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/Jon-Schneider/xl/internal/clipboard"
-	"github.com/Jon-Schneider/xl/internal/document"
-	"github.com/Jon-Schneider/xl/internal/engine"
-	"github.com/Jon-Schneider/xl/internal/undo"
+	"github.com/Jon-Schneider/xlent/internal/clipboard"
+	"github.com/Jon-Schneider/xlent/internal/document"
+	"github.com/Jon-Schneider/xlent/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/undo"
 )
 
 // statsCellLimit caps how many cells the status bar aggregates scan, so a

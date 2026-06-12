@@ -11,7 +11,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	"github.com/Jon-Schneider/xl/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
 // CircularRefError is displayed for cells caught in a reference cycle. The
@@ -25,7 +25,7 @@ var knownErrorValues = []string{
 	"#DIV/0!", "#N/A", "#NAME?", "#NULL!", "#NUM!", "#REF!", "#VALUE!", "#CALC!", "#SPILL!",
 }
 
-// Workbook wraps an excelize file with xl's editing model: typed cell entry,
+// Workbook wraps an excelize file with xlent's editing model: typed cell entry,
 // a dependency graph for incremental recalculation, a display-value cache,
 // and dirty tracking.
 type Workbook struct {

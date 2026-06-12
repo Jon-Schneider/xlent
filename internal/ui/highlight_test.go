@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/Jon-Schneider/xl/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
 func TestScanFormulaRefsFindsCellsRangesAndSheetQualifiedRefs(t *testing.T) {

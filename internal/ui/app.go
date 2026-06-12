@@ -1,4 +1,4 @@
-// Package ui implements the terminal interface for xl: the grid, menu bar,
+// Package ui implements the terminal interface for xlent: the grid, menu bar,
 // formula bar, status bar, and all keyboard/mouse handling.
 package ui
 
@@ -9,13 +9,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/Jon-Schneider/xl/internal/clipboard"
-	"github.com/Jon-Schneider/xl/internal/document"
-	"github.com/Jon-Schneider/xl/internal/engine"
-	"github.com/Jon-Schneider/xl/internal/undo"
+	"github.com/Jon-Schneider/xlent/internal/clipboard"
+	"github.com/Jon-Schneider/xlent/internal/document"
+	"github.com/Jon-Schneider/xlent/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/undo"
 )
 
-// App is the root Bubble Tea model for xl.
+// App is the root Bubble Tea model for xlent.
 type App struct {
 	width  int
 	height int
@@ -587,7 +587,7 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 	case actDeleteSheet:
 		a.deleteSheet()
 	case actAbout:
-		a.statusMsg = "xl — an Excel-style terminal spreadsheet. F10 or click for menus."
+		a.statusMsg = "xlent — an Excel-style terminal spreadsheet. F10 or click for menus."
 	}
 	return a, nil
 }
@@ -1138,9 +1138,9 @@ func (a *App) renderStatusBar(width int) string {
 
 func (a *App) windowTitle() string {
 	if p := a.wb.Path(); p != "" {
-		return "xl — " + filepath.Base(p)
+		return "xlent — " + filepath.Base(p)
 	}
-	return "xl"
+	return "xlent"
 }
 
 func clamp(v, lo, hi int) int {

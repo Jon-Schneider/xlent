@@ -117,7 +117,7 @@ func defaultMenus() []menu {
 			{label: "Delete Sheet", action: actDeleteSheet},
 		}},
 		{title: "Help", items: []menuItem{
-			{label: "About xl", action: actAbout},
+			{label: "About xlent", action: actAbout},
 		}},
 	}
 }

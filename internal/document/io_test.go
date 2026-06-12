@@ -72,7 +72,7 @@ func TestLoadNormalizesLowercaseFormulasWithoutDirtying(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "lower.xlsx")
 
 	// Write a file with a lowercase formula directly, bypassing SetCell's
-	// normalization — as an older xl or another tool might have.
+	// normalization — as an older xlent or another tool might have.
 	w := New()
 	sheet := w.Sheets()[0]
 	mustSetCell(t, w, sheet, "A1", "1")

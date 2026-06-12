@@ -1,6 +1,6 @@
-# xl
+# xlent
 
-An Excel-style spreadsheet for the terminal. `xl` opens, edits, and saves
+An Excel-style spreadsheet for the terminal. `xlent` opens, edits, and saves
 `.xlsx` and `.csv` files, evaluates formulas live, and is driven by the
 keyboard shortcuts and mouse gestures you already know from Excel — no modes,
 no new grammar to learn.
@@ -23,8 +23,8 @@ no new grammar to learn.
 ## Install
 
 ```sh
-go build -o xl ./cmd/xl     # or: ./build.sh (vet + tests + build)
-./xl budget.xlsx            # open a file, or run bare for a blank workbook
+go build -o xlent ./cmd/xlent     # or: ./build.sh (vet + tests + build)
+./xlent budget.xlsx            # open a file, or run bare for a blank workbook
 ```
 
 Requires Go 1.25+. A terminal with mouse support is recommended; terminals
@@ -61,7 +61,7 @@ fallback).
 - **Undo/redo for everything** (`Ctrl+Z` / `Ctrl+Y`): one user action is one
   undo step. Structural changes (rows, columns, sheets, formats) restore
   whole-workbook snapshots; plain edits replay.
-- **Faithful round-trips.** Anything `xl` doesn't touch — styles, widths,
+- **Faithful round-trips.** Anything `xlent` doesn't touch — styles, widths,
   other sheets, content it can't display — is preserved on save.
 - **Mouse everywhere.** Click and drag to select, drag column edges in the
   header to resize, click tabs, scroll with the wheel, use the menus.
@@ -88,7 +88,7 @@ fallback).
 ## Architecture
 
 ```
-cmd/xl                  entry point
+cmd/xlent                  entry point
 internal/ui             Bubble Tea app: grid, menus, prompts, editor, mouse
 internal/document       Workbook: all mutations, recalc orchestration, I/O
 internal/engine         references, formula rewriting, dependency graph

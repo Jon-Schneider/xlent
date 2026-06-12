@@ -1,4 +1,4 @@
-// Package clipboard implements xl's copy/cut/paste model: an internal
+// Package clipboard implements xlent's copy/cut/paste model: an internal
 // register holding raw cell contents (the source of truth), Excel-style
 // relative reference adjustment on paste, and TSV conversion for system
 // clipboard interop via OSC 52.
@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Jon-Schneider/xl/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
 // Block is a rectangular snapshot of cell raw contents taken at copy/cut

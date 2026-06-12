@@ -1,14 +1,14 @@
-# xl — A Terminal Spreadsheet
+# xlent — A Terminal Spreadsheet
 
-`xl` is a non-modal, Excel-style spreadsheet for the terminal. It opens, edits, and
+`xlent` is a non-modal, Excel-style spreadsheet for the terminal. It opens, edits, and
 saves `.xlsx` and `.csv` files, evaluates formulas live, and is driven by familiar
 Excel keyboard shortcuts and the mouse — no vim grammar, no editing modes to learn.
 
 ## 1. Goals
 
 - **Zero learning curve for Excel users.** Plain typing replaces a cell's content;
-  arrows move; Ctrl+C/X/V/Z do what they always do. If you know Excel, you know `xl`.
-- **Faithful files.** Opening an `.xlsx` and saving it preserves everything `xl`
+  arrows move; Ctrl+C/X/V/Z do what they always do. If you know Excel, you know `xlent`.
+- **Faithful files.** Opening an `.xlsx` and saving it preserves everything `xlent`
   didn't touch: styles, column widths, number formats, other sheets.
 - **Live formulas.** Edit a cell and every dependent cell updates immediately.
 - **Pleasant to look at.** A clean grid, a Fresh-style mouse-driven menu bar, styled
@@ -118,7 +118,7 @@ cannot represent some combos.
   reachable through the menu bar. Tier detection is automatic at startup.
 
 Cmd-based macOS shortcuts are impossible in any terminal (the emulator consumes
-them); `xl` uses Windows-Excel-style Ctrl bindings everywhere.
+them); `xlent` uses Windows-Excel-style Ctrl bindings everywhere.
 
 ## 5. Formulas
 
@@ -126,7 +126,7 @@ them); `xl` uses Windows-Excel-style Ctrl bindings everywhere.
   (`$A$1`), cross-sheet refs (`Sheet2!A1`), the usual operators, and function calls.
 - **Evaluation:** the excelize workbook is the single source of truth for cell
   content. Evaluation delegates to excelize's `CalcCellValue` (400+ functions).
-- **Incremental recalc:** `xl` maintains its own dependency graph, built by parsing
+- **Incremental recalc:** `xlent` maintains its own dependency graph, built by parsing
   formula references on entry. Editing a cell dirties its transitive dependents
   only; those are re-evaluated in topological order. Cycles produce
   circular-reference errors rather than hangs.
@@ -165,12 +165,12 @@ per-workbook, survives sheet switches, and is discarded on file close.
   CSV-opened file as `.xlsx` (and vice versa) is supported via save-as.
 - Dirty tracking with `[+]` indicator; quitting or opening over a dirty workbook
   prompts Save / Discard / Cancel.
-- `xl path/to/file.xlsx` opens a file; bare `xl` opens an empty workbook.
+- `xlent path/to/file.xlsx` opens a file; bare `xlent` opens an empty workbook.
 
 ## 8. Architecture
 
 ```
-cmd/xl/             entry point, CLI args
+cmd/xlent/             entry point, CLI args
 internal/document/  workbook model: wraps excelize, owns all mutations,
                     dirty tracking, save/load (xlsx + csv adapters)
 internal/engine/    formula reference parser, dependency graph,
@@ -219,7 +219,7 @@ Rules of the road:
 
 Preserved from the initial SPEC.md:
 
-* Name it 'xl'.
+* Name it 'xlent'.
 * Non-modal, Excel-like cell editing. Plain typing (no modifiers) starts editing/replaces cell content
 * Excel-based modifier + key style keyboard shortcuts (for example copy/cut/paste as Ctrl+C/X/V) and cell selection via keyboard shortcuts w/arrow key.
 * No vim grammar or editing mode

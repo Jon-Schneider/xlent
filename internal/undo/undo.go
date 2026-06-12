@@ -1,4 +1,4 @@
-// Package undo implements xl's undo/redo stack as commands over cell
+// Package undo implements xlent's undo/redo stack as commands over cell
 // mutations. Every user action — a single edit, a multi-cell paste, a range
 // clear — is one Command, so one Ctrl+Z reverses one action.
 package undo

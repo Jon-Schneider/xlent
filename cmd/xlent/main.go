@@ -6,7 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/Jon-Schneider/xl/internal/ui"
+	"github.com/Jon-Schneider/xlent/internal/ui"
 )
 
 func main() {
@@ -17,12 +17,12 @@ func main() {
 
 	app, err := ui.NewApp(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "xl: %v\n", err)
+		fmt.Fprintf(os.Stderr, "xlent: %v\n", err)
 		os.Exit(1)
 	}
 
 	if _, err := tea.NewProgram(app).Run(); err != nil {
-		fmt.Fprintf(os.Stderr, "xl: %v\n", err)
+		fmt.Fprintf(os.Stderr, "xlent: %v\n", err)
 		os.Exit(1)
 	}
 }

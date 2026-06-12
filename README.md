@@ -83,7 +83,7 @@ fallback).
 | `Ctrl+S` / `Ctrl+Shift+S`, `Ctrl+O`, `Ctrl+N` | Save / save as, open, new |
 | `F2` | Edit cell in place |
 | `F10` | Open the menu bar |
-| `Ctrl+Q` | Quit |
+| `Ctrl+Q` / `Ctrl+W` | Quit |
 
 ## Architecture
 

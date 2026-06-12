@@ -644,7 +644,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	a.statusMsg = ""
 
 	switch msg.String() {
-	case "ctrl+q":
+	case "ctrl+q", "ctrl+w":
 		return a.requestWithDirtyCheck(pendingQuit, "quitting")
 	case "ctrl+o":
 		return a.requestWithDirtyCheck(pendingOpenPrompt, "opening")

@@ -99,7 +99,7 @@ rows/columns, wheel scrolls, click on sheet tabs switches sheets.
 | `Ctrl+S` | Save (`Ctrl+Shift+S` save-as) |
 | `Ctrl+O` | Open |
 | `Ctrl+N` | New workbook |
-| `Ctrl+Q` | Quit (prompts if dirty) |
+| `Ctrl+Q` / `Ctrl+W` | Quit (prompts if dirty) |
 | `F10` | Open menu bar |
 
 Raw mode disables flow control (`IXON`) so `Ctrl+S`/`Ctrl+Q` reach the app, and

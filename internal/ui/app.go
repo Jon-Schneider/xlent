@@ -52,6 +52,10 @@ type App struct {
 	// in the Find prompt.
 	lastSearch string
 
+	// colResize tracks an in-progress column-width drag started on a column
+	// edge in the header row.
+	colResize colResize
+
 	statusMsg string
 }
 
@@ -131,14 +135,54 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.handleMouseClick(m)
 
 	case tea.MouseMotionMsg:
+		if a.colResize.active {
+			a.dragColumnWidth(tea.Mouse(msg).X)
+			return a, nil
+		}
 		if tea.Mouse(msg).Button == tea.MouseLeft {
 			a.extendTo(tea.Mouse(msg))
 		}
+
+	case tea.MouseReleaseMsg:
+		a.colResize = colResize{}
 
 	case tea.MouseWheelMsg:
 		a.handleWheel(tea.Mouse(msg))
 	}
 	return a, nil
+}
+
+// colResize is the state of a column-width drag: which column, where the
+// drag started, and the width it started from.
+type colResize struct {
+	active bool
+	col    int
+	startX int
+	startW int
+}
+
+// startColResizeAt begins a width drag when x sits on a visible column's
+// right edge in the header row (within one cell either side). Reports
+// whether a drag started.
+func (a *App) startColResizeAt(x int) bool {
+	for i, c := range a.layout.cols {
+		edge := a.layout.colX[i] + a.colWidth(c) - 1
+		if x >= edge-1 && x <= edge+1 {
+			a.colResize = colResize{active: true, col: c, startX: x, startW: a.colWidth(c)}
+			return true
+		}
+	}
+	return false
+}
+
+// dragColumnWidth applies the width implied by the pointer's travel since
+// the drag started. Widths persist into the file (no undo — acceptable for
+// a layout property).
+func (a *App) dragColumnWidth(x int) {
+	want := a.colResize.startW + (x - a.colResize.startX)
+	if err := a.wb.SetColWidth(a.sheet, a.colResize.col, want); err != nil {
+		a.statusMsg = err.Error()
+	}
 }
 
 // handleEditingKey processes keys while the in-cell editor is open.
@@ -771,8 +815,12 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 		return
 	}
 
-	// Column header: select the whole used height of that column.
+	// Column header: a column edge starts a width drag; anywhere else
+	// selects the whole used height of that column.
 	if m.Y == a.layout.headerY {
+		if a.startColResizeAt(m.X) {
+			return
+		}
 		if col := a.layout.colAt(m.X); col > 0 {
 			_, maxRow := a.wb.UsedRange(a.sheet)
 			a.anchor = position{Col: col, Row: 1}

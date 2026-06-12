@@ -330,6 +330,20 @@ func (w *Workbook) ColWidth(sheet string, col, fallback int) int {
 	return min(max(int(width+1), 4), 40)
 }
 
+// SetColWidth stores a column's display width in terminal cells, clamped to
+// the same 4..40 range ColWidth reads back. The stored file width is
+// cells-1, the inverse of ColWidth's int(width+1) mapping, so a width
+// round-trips exactly through save and load.
+func (w *Workbook) SetColWidth(sheet string, col, cells int) error {
+	cells = min(max(cells, 4), 40)
+	name := engine.ColumnName(col)
+	if err := w.file.SetColWidth(sheet, name, name, float64(cells-1)); err != nil {
+		return fmt.Errorf("set width of column %s: %w", name, err)
+	}
+	w.dirty = true
+	return nil
+}
+
 // node validates and canonicalizes a cell name, returning the graph node and
 // the normalized A1 name.
 func (w *Workbook) node(sheet, cellName string) (engine.Node, string, error) {

@@ -30,6 +30,96 @@ var (
 	FormatText     = NumberFormat{ID: 49}                 // @
 )
 
+// FontStyle is a togglable font attribute.
+type FontStyle int
+
+const (
+	FontBold FontStyle = iota
+	FontItalic
+	FontUnderline
+)
+
+// ToggleFontStyle toggles a font attribute across the rectangle the way
+// Excel does: if every cell already has it, it's cleared everywhere;
+// otherwise it's set everywhere.
+func (w *Workbook) ToggleFontStyle(sheet string, minCol, minRow, maxCol, maxRow int, attr FontStyle) error {
+	allHave := true
+scan:
+	for row := minRow; row <= maxRow; row++ {
+		for col := minCol; col <= maxCol; col++ {
+			b, i, u := w.CellEmphasis(sheet, engine.CellName(col, row))
+			has := map[FontStyle]bool{FontBold: b, FontItalic: i, FontUnderline: u}[attr]
+			if !has {
+				allHave = false
+				break scan
+			}
+		}
+	}
+	target := !allHave
+
+	rewritten := make(map[int]int)
+	for row := minRow; row <= maxRow; row++ {
+		for col := minCol; col <= maxCol; col++ {
+			cell := engine.CellName(col, row)
+			cur, err := w.file.GetCellStyle(sheet, cell)
+			if err != nil {
+				return fmt.Errorf("read style of %s!%s: %w", sheet, cell, err)
+			}
+			newID, ok := rewritten[cur]
+			if !ok {
+				style, err := w.file.GetStyle(cur)
+				if err != nil || style == nil {
+					style = &excelize.Style{}
+				}
+				if style.Font == nil {
+					style.Font = &excelize.Font{}
+				}
+				switch attr {
+				case FontBold:
+					style.Font.Bold = target
+				case FontItalic:
+					style.Font.Italic = target
+				case FontUnderline:
+					style.Font.Underline = ""
+					if target {
+						style.Font.Underline = "single"
+					}
+				}
+				if newID, err = w.file.NewStyle(style); err != nil {
+					return fmt.Errorf("build style: %w", err)
+				}
+				rewritten[cur] = newID
+			}
+			if err := w.file.SetCellStyle(sheet, cell, cell, newID); err != nil {
+				return fmt.Errorf("style %s!%s: %w", sheet, cell, err)
+			}
+		}
+	}
+	w.dirty = true
+	return nil
+}
+
+// CellEmphasis reports the cell's font emphasis for grid rendering. Results
+// are cached per style ID — styles are immutable once created, so the cache
+// only ever grows within one workbook's life.
+func (w *Workbook) CellEmphasis(sheet, cellName string) (bold, italic, underline bool) {
+	styleID, err := w.file.GetCellStyle(sheet, cellName)
+	if err != nil {
+		return false, false, false
+	}
+	if e, ok := w.emphasis[styleID]; ok {
+		return e[0], e[1], e[2]
+	}
+	style, err := w.file.GetStyle(styleID)
+	if err == nil && style != nil && style.Font != nil {
+		bold = style.Font.Bold
+		italic = style.Font.Italic
+		underline = style.Font.Underline != "" && style.Font.Underline != "none"
+	}
+	w.emphasis[styleID] = [3]bool{bold, italic, underline}
+	return bold, italic, underline
+}
+
 // SetNumberFormat applies a number format to every cell in the (inclusive,
 // 1-based) rectangle, preserving each cell's other style attributes. Cached
 // display values for the affected cells are invalidated — the stored values

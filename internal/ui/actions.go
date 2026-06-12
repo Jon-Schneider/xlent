@@ -304,6 +304,17 @@ func (a *App) applyNumberFormat(f document.NumberFormat, label string) {
 	}
 }
 
+// toggleFontStyle toggles bold/italic/underline over the selection, also as
+// a snapshot-undoable command.
+func (a *App) toggleFontStyle(attr document.FontStyle, label string) {
+	sel := rectBetween(a.anchor, a.cursor)
+	if a.structuralOp(label, func() error {
+		return a.wb.ToggleFontStyle(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow, attr)
+	}) {
+		a.statusMsg = label + " " + sel.String()
+	}
+}
+
 func (a *App) undo() {
 	label := a.undoStack.UndoLabel()
 	if label == "" {

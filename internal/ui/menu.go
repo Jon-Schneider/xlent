@@ -39,6 +39,9 @@ const (
 	actFmtTime
 	actFmtDateTime
 	actFmtText
+	actBold
+	actItalic
+	actUnderline
 	actPrevSheet
 	actNextSheet
 	actAddSheet
@@ -100,6 +103,10 @@ func defaultMenus() []menu {
 			{label: "Date & Time", action: actFmtDateTime},
 			divider,
 			{label: "Text", action: actFmtText},
+			divider,
+			{label: "Bold", shortcut: "Ctrl+B", action: actBold},
+			{label: "Italic", shortcut: "Ctrl+I", action: actItalic},
+			{label: "Underline", shortcut: "Ctrl+U", action: actUnderline},
 		}},
 		{title: "View", items: []menuItem{
 			{label: "Previous Sheet", shortcut: "Ctrl+PgUp", action: actPrevSheet},

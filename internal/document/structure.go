@@ -48,6 +48,7 @@ func (w *Workbook) resetDerivedState() {
 	w.values = make(map[engine.Node]string)
 	w.cyclic = make(map[engine.Node]bool)
 	w.extents = make(map[string][2]int)
+	w.emphasis = make(map[int][3]bool)
 	w.rebuildGraph()
 	w.dirty = true
 }

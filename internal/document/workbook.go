@@ -40,6 +40,10 @@ type Workbook struct {
 
 	// extents caches UsedRange per sheet; cleared by any edit to that sheet.
 	extents map[string][2]int
+
+	// emphasis caches font emphasis per style ID for grid rendering; style
+	// definitions are immutable once created, so entries never go stale.
+	emphasis map[int][3]bool
 }
 
 // New returns a blank, unsaved workbook with a single sheet.
@@ -49,11 +53,12 @@ func New() *Workbook {
 
 func newWorkbook(f *excelize.File) *Workbook {
 	return &Workbook{
-		file:    f,
-		graph:   engine.NewGraph(),
-		values:  make(map[engine.Node]string),
-		cyclic:  make(map[engine.Node]bool),
-		extents: make(map[string][2]int),
+		file:     f,
+		graph:    engine.NewGraph(),
+		values:   make(map[engine.Node]string),
+		cyclic:   make(map[engine.Node]bool),
+		extents:  make(map[string][2]int),
+		emphasis: make(map[int][3]bool),
 	}
 }
 

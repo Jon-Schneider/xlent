@@ -29,6 +29,45 @@ func TestFormatMenuAppliesCurrencyToSelectionAndUndoes(t *testing.T) {
 	}
 }
 
+func TestCtrlBToggleBoldOnSelectionAndUndo(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	press(t, app, tea.Key{Code: tea.KeyRight, Mod: tea.ModShift}) // A1:B1
+	press(t, app, tea.Key{Code: 'b', Mod: tea.ModCtrl})
+
+	for _, cell := range []string{"A1", "B1"} {
+		if bold, _, _ := wb.CellEmphasis(app.sheet, cell); !bold {
+			t.Errorf("%s must be bold after Ctrl+B", cell)
+		}
+	}
+	if bold, _, _ := wb.CellEmphasis(app.sheet, "A2"); bold {
+		t.Error("A2 outside the selection must stay plain")
+	}
+
+	press(t, app, tea.Key{Code: 'z', Mod: tea.ModCtrl})
+	if bold, _, _ := app.wb.CellEmphasis(app.sheet, "A1"); bold {
+		t.Error("undo must remove the bold")
+	}
+}
+
+func TestCtrlIAndCtrlUToggleItalicAndUnderline(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	press(t, app, tea.Key{Code: 'i', Mod: tea.ModCtrl})
+	press(t, app, tea.Key{Code: 'u', Mod: tea.ModCtrl})
+
+	_, italic, underline := wb.CellEmphasis(app.sheet, "A1")
+	if !italic || !underline {
+		t.Errorf("emphasis = italic:%v underline:%v, want both", italic, underline)
+	}
+
+	press(t, app, tea.Key{Code: 'i', Mod: tea.ModCtrl})
+	_, italic, underline = wb.CellEmphasis(app.sheet, "A1")
+	if italic || !underline {
+		t.Errorf("after re-toggle: italic:%v underline:%v, want italic off, underline kept", italic, underline)
+	}
+}
+
 func TestFormatMenuPercentRendersFractionsAsPercentages(t *testing.T) {
 	app, wb := setupTestApp(t)
 	if err := wb.SetCell(app.sheet, "C1", "0.5"); err != nil {

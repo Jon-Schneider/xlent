@@ -570,6 +570,12 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.applyNumberFormat(document.FormatDateTime, "Date & Time")
 	case actFmtText:
 		a.applyNumberFormat(document.FormatText, "Text")
+	case actBold:
+		a.toggleFontStyle(document.FontBold, "Bold")
+	case actItalic:
+		a.toggleFontStyle(document.FontItalic, "Italic")
+	case actUnderline:
+		a.toggleFontStyle(document.FontUnderline, "Underline")
 	case actPrevSheet:
 		a.switchSheet(-1)
 	case actNextSheet:
@@ -739,6 +745,13 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+a":
 		a.selectUsedRange()
+
+	case "ctrl+b":
+		a.toggleFontStyle(document.FontBold, "Bold")
+	case "ctrl+i":
+		a.toggleFontStyle(document.FontItalic, "Italic")
+	case "ctrl+u":
+		a.toggleFontStyle(document.FontUnderline, "Underline")
 
 	case "ctrl+f":
 		a.prompt.open(promptFind, "Find: ", a.lastSearch)

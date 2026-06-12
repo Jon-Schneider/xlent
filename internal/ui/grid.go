@@ -202,6 +202,10 @@ func (a *App) renderGrid(layout gridLayout) string {
 				style = styleErrorValue
 			}
 
+			if bold, italic, underline := a.wb.CellEmphasis(a.sheet, p.cellName()); bold || italic || underline {
+				style = style.Bold(bold).Italic(italic).Underline(underline)
+			}
+
 			align := lipgloss.Left
 			if isNumeric(value) {
 				align = lipgloss.Right

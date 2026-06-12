@@ -29,6 +29,8 @@ const (
 	actDeleteRows
 	actDeleteCols
 	actSelectAll
+	actFind
+	actGoTo
 	actPrevSheet
 	actNextSheet
 	actAddSheet
@@ -71,6 +73,9 @@ func defaultMenus() []menu {
 			{label: "Insert Columns", action: actInsertCols},
 			{label: "Delete Rows", shortcut: "Ctrl+-", action: actDeleteRows},
 			{label: "Delete Columns", action: actDeleteCols},
+			divider,
+			{label: "Find…", shortcut: "Ctrl+F", action: actFind},
+			{label: "Go To…", shortcut: "Ctrl+G", action: actGoTo},
 			divider,
 			{label: "Select All", shortcut: "Ctrl+A", action: actSelectAll},
 		}},

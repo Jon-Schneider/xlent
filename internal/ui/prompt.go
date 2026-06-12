@@ -8,6 +8,8 @@ const (
 	promptNone promptKind = iota
 	promptSaveAs
 	promptOpen
+	promptFind
+	promptGoTo
 	promptConfirmDirty // "Save changes before <pending>? (y/n)"
 )
 

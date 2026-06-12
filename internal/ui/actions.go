@@ -363,8 +363,79 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 		}
 		a.wb.Close()
 		a.adoptWorkbook(wb)
+
+	case promptFind:
+		a.lastSearch = text
+		a.findNext(text)
+
+	case promptGoTo:
+		a.goToRef(text)
 	}
 	return a, nil
+}
+
+// findNext moves the cursor to the next cell whose content or displayed
+// value contains term (case-insensitive), scanning row-major from the cell
+// after the cursor and wrapping around the used range.
+func (a *App) findNext(term string) {
+	if term == "" {
+		a.statusMsg = "Nothing to find"
+		return
+	}
+	maxCol, maxRow := a.wb.UsedRange(a.sheet)
+	needle := strings.ToLower(term)
+	total := maxCol * maxRow
+
+	start := 0 // first cell to inspect, as a row-major index
+	if a.cursor.Col <= maxCol && a.cursor.Row <= maxRow {
+		start = (a.cursor.Row-1)*maxCol + a.cursor.Col // cell after the cursor
+	}
+	for i := 0; i < total; i++ {
+		idx := (start + i) % total
+		p := position{Col: idx%maxCol + 1, Row: idx/maxCol + 1}
+		cell := p.cellName()
+		if strings.Contains(strings.ToLower(a.wb.RawContent(a.sheet, cell)), needle) ||
+			strings.Contains(strings.ToLower(a.wb.DisplayValue(a.sheet, cell)), needle) {
+			a.setCursor(p, false)
+			a.statusMsg = "Found " + cell
+			return
+		}
+	}
+	a.statusMsg = fmt.Sprintf("%q not found", term)
+}
+
+// goToRef jumps to a typed reference: a cell puts the cursor there, a range
+// selects it with the cursor on its first cell, and a sheet qualifier
+// switches sheets first.
+func (a *App) goToRef(text string) {
+	if text == "" {
+		return
+	}
+	ref, err := engine.ParseRef(a.sheet, text)
+	if err != nil {
+		a.statusMsg = fmt.Sprintf("Can't go to %q", text)
+		return
+	}
+
+	found := false
+	for _, s := range a.wb.Sheets() {
+		if strings.EqualFold(ref.Sheet, s) {
+			ref.Sheet = s
+			found = true
+			break
+		}
+	}
+	if !found {
+		a.statusMsg = fmt.Sprintf("No sheet named %q", ref.Sheet)
+		return
+	}
+
+	if ref.Sheet != a.sheet {
+		a.sheet = ref.Sheet
+	}
+	a.anchor = position{Col: ref.MaxCol, Row: ref.MaxRow}
+	a.cursor = position{Col: ref.MinCol, Row: ref.MinRow}
+	a.scrollIntoView(a.cursor)
 }
 
 // adoptWorkbook swaps in a freshly opened workbook and resets per-document

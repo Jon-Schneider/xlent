@@ -48,6 +48,10 @@ type App struct {
 	// the selection as if Shift were held.
 	extendMode bool
 
+	// lastSearch is the most recent Find term, repeated by F3 and prefilled
+	// in the Find prompt.
+	lastSearch string
+
 	statusMsg string
 }
 
@@ -419,6 +423,10 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.deleteCols()
 	case actSelectAll:
 		a.selectUsedRange()
+	case actFind:
+		a.prompt.open(promptFind, "Find: ", a.lastSearch)
+	case actGoTo:
+		a.prompt.open(promptGoTo, "Go to: ", "")
 	case actPrevSheet:
 		a.switchSheet(-1)
 	case actNextSheet:
@@ -584,6 +592,13 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+a":
 		a.selectUsedRange()
+
+	case "ctrl+f":
+		a.prompt.open(promptFind, "Find: ", a.lastSearch)
+	case "f3":
+		a.findNext(a.lastSearch)
+	case "ctrl+g":
+		a.prompt.open(promptGoTo, "Go to: ", "")
 
 	// Excel disambiguates row vs column insert/delete by whole-row/column
 	// selection, which our selection model doesn't track; the shortcut does

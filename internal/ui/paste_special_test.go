@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/Jon-Schneider/xlent/internal/document"
+	"github.com/Jon-Schneider/xlent/internal/engine"
+	"github.com/xuri/excelize/v2"
 )
 
 func TestPasteValuesDropsFormulas(t *testing.T) {
@@ -67,5 +69,51 @@ func TestPasteFormatsCopiesEmphasisNotContent(t *testing.T) {
 	}
 	if got := wb.DisplayValue(sheet, "A2"); got != "30" {
 		t.Errorf("A2 content = %q, want 30 unchanged (formats only)", got)
+	}
+}
+
+func TestNormalPasteCopiesFullMetadataAndMergedRange(t *testing.T) {
+	app, wb := setupTestApp(t)
+	sheet := app.sheet
+	if err := wb.SetCell(sheet, "A10", "yes"); err != nil {
+		t.Fatal(err)
+	}
+	validation := excelize.NewDataValidation(true)
+	validation.SetSqref("A10")
+	if err := validation.SetDropList([]string{"yes", "no"}); err != nil {
+		t.Fatal(err)
+	}
+	metadata := document.CellMetadata{
+		Style: &excelize.Style{
+			Fill:   excelize.Fill{Type: "pattern", Color: []string{"FF0000"}, Pattern: 1},
+			Border: []excelize.Border{{Type: "bottom", Color: "000000", Style: 2}},
+		},
+		Validations: []*excelize.DataValidation{validation},
+		Comment:     &excelize.Comment{Cell: "A10", Author: "tester", Text: "note"},
+		Hyperlink:   &document.CellHyperlink{Target: "https://example.com", Type: "External"},
+	}
+	if err := wb.ApplyCellMetadata(sheet, "A10", metadata); err != nil {
+		t.Fatal(err)
+	}
+	if err := wb.MergeRange(sheet, engine.Ref{Sheet: sheet, MinCol: 1, MinRow: 10, MaxCol: 2, MaxRow: 10}); err != nil {
+		t.Fatal(err)
+	}
+
+	app.anchor = position{Col: 1, Row: 10}
+	app.cursor = position{Col: 1, Row: 10}
+	app.copySelection(false)
+	app.setCursor(position{Col: 4, Row: 10}, false)
+	app.pasteFromRegister()
+
+	if got := wb.RawContent(sheet, "D10"); got != "yes" {
+		t.Fatalf("D10 content = %q, want yes", got)
+	}
+	if merged, ok := wb.MergedRangeAt(sheet, 5, 10); !ok || merged.MinCol != 4 || merged.MaxCol != 5 {
+		t.Fatalf("D10:E10 merge missing: %+v, %v", merged, ok)
+	}
+	got := wb.CellMetadataAt(sheet, "D10")
+	if got.Style == nil || len(got.Style.Border) != 1 || len(got.Validations) != 1 ||
+		got.Comment == nil || got.Hyperlink == nil {
+		t.Fatalf("pasted metadata incomplete: %+v", got)
 	}
 }

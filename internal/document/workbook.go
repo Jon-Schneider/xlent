@@ -413,8 +413,8 @@ type FormulaRewrite struct {
 // just-moved range so it points at their new location (Excel's cut+paste
 // semantics). Rewrites flow through SetCell, so the dependency graph and
 // value caches stay consistent. The returned list is what changed.
-func (w *Workbook) RetargetReferences(move engine.MoveSpec) []FormulaRewrite {
-	var out []FormulaRewrite
+func (w *Workbook) RetargetReferences(move engine.MoveSpec) ([]FormulaRewrite, error) {
+	var pending []FormulaRewrite
 	// Snapshot first: SetCell mutates the graph while we iterate.
 	for _, n := range w.graph.Nodes() {
 		cell := engine.CellName(n.Col, n.Row)
@@ -427,12 +427,17 @@ func (w *Workbook) RetargetReferences(move engine.MoveSpec) []FormulaRewrite {
 			continue
 		}
 		before, after := "="+formula, "="+rewritten
-		if err := w.SetCell(n.Sheet, cell, after); err != nil {
-			continue
+		if err := w.ensureCellEditable(n.Sheet, cell); err != nil {
+			return nil, err
 		}
-		out = append(out, FormulaRewrite{Sheet: n.Sheet, Cell: cell, Before: before, After: after})
+		pending = append(pending, FormulaRewrite{Sheet: n.Sheet, Cell: cell, Before: before, After: after})
 	}
-	return out
+	for _, rewrite := range pending {
+		if err := w.setCell(rewrite.Sheet, rewrite.Cell, rewrite.After, false); err != nil {
+			return nil, err
+		}
+	}
+	return pending, nil
 }
 
 // ColWidth returns a column's display width in terminal cells, derived from

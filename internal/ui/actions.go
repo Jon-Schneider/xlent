@@ -90,24 +90,39 @@ func (a *App) clearSelection() {
 // returns a command that publishes the display values to the system
 // clipboard as TSV (OSC 52).
 func (a *App) copySelection(cut bool) tea.Cmd {
-	sel := rectBetween(a.anchor, a.cursor)
+	sel := a.selectionRect()
 
 	contents := make([][]string, 0, sel.MaxRow-sel.MinRow+1)
 	display := make([][]string, 0, sel.MaxRow-sel.MinRow+1)
 	styles := make([][]document.CellStyle, 0, sel.MaxRow-sel.MinRow+1)
+	metadata := make([][]document.CellMetadata, 0, sel.MaxRow-sel.MinRow+1)
 	for row := sel.MinRow; row <= sel.MaxRow; row++ {
 		rawRow := make([]string, 0, sel.MaxCol-sel.MinCol+1)
 		dispRow := make([]string, 0, sel.MaxCol-sel.MinCol+1)
 		styleRow := make([]document.CellStyle, 0, sel.MaxCol-sel.MinCol+1)
+		metadataRow := make([]document.CellMetadata, 0, sel.MaxCol-sel.MinCol+1)
 		for col := sel.MinCol; col <= sel.MaxCol; col++ {
 			cell := engine.CellName(col, row)
 			rawRow = append(rawRow, a.wb.RawContent(a.sheet, cell))
 			dispRow = append(dispRow, a.wb.DisplayValue(a.sheet, cell))
 			styleRow = append(styleRow, a.wb.CellStyleAt(a.sheet, cell))
+			metadataRow = append(metadataRow, a.wb.CellMetadataAt(a.sheet, cell))
 		}
 		contents = append(contents, rawRow)
 		display = append(display, dispRow)
 		styles = append(styles, styleRow)
+		metadata = append(metadata, metadataRow)
+	}
+	sourceRef := engine.Ref{
+		Sheet: a.sheet, MinCol: sel.MinCol, MinRow: sel.MinRow,
+		MaxCol: sel.MaxCol, MaxRow: sel.MaxRow,
+	}
+	var merges []clipboard.MergedRange
+	for _, merged := range a.wb.MergedRangesWithin(a.sheet, sourceRef) {
+		merges = append(merges, clipboard.MergedRange{
+			MinCol: merged.MinCol - sel.MinCol, MinRow: merged.MinRow - sel.MinRow,
+			MaxCol: merged.MaxCol - sel.MinCol, MaxRow: merged.MaxRow - sel.MinRow,
+		})
 	}
 
 	a.register.Put(clipboard.Block{
@@ -116,6 +131,8 @@ func (a *App) copySelection(cut bool) tea.Cmd {
 		Contents:    contents,
 		Display:     display,
 		Styles:      styles,
+		Metadata:    metadata,
+		Merges:      merges,
 		Cut:         cut,
 	})
 	if cut {
@@ -126,8 +143,9 @@ func (a *App) copySelection(cut bool) tea.Cmd {
 	return tea.SetClipboard(clipboard.EncodeTSV(display))
 }
 
-// pasteFromRegister pastes the internal register block at the cursor as one
-// undoable command. A cut block also clears its source cells and is consumed.
+// pasteFromRegister pastes content and its full cell metadata as one
+// snapshot-undoable command. A cut block also clears its source and is
+// consumed.
 func (a *App) pasteFromRegister() {
 	block, ok := a.register.Get()
 	if !ok {
@@ -141,71 +159,95 @@ func (a *App) pasteFromRegister() {
 		return
 	}
 
-	targets := make(map[string]bool, len(writes))
-	for _, wr := range writes {
-		targets[wr.Sheet+"!"+wr.Cell] = true
-	}
-
-	var edits []undo.CellEdit
-
-	// A cut clears its source first (skipping cells the paste overwrites
-	// anyway), so the single command captures the whole move.
 	srcCol, srcRow, srcErr := engine.ParseCellName(block.SourceCell)
-	if block.Cut && srcErr == nil {
-		for r := 0; r < block.Rows(); r++ {
-			for c := 0; c < block.Cols(); c++ {
-				cell := engine.CellName(srcCol+c, srcRow+r)
-				if targets[block.SourceSheet+"!"+cell] {
-					continue
-				}
-				before := a.wb.RawContent(block.SourceSheet, cell)
-				if before == "" {
-					continue
-				}
-				if err := a.wb.SetCell(block.SourceSheet, cell, ""); err != nil {
-					a.statusMsg = err.Error()
-					continue
-				}
-				edits = append(edits, undo.CellEdit{Sheet: block.SourceSheet, Cell: cell, Before: before})
+	targetCol, targetRow := a.cursor.Col, a.cursor.Row
+	targets := make(map[string]bool, len(writes))
+	for _, write := range writes {
+		targets[write.Sheet+"!"+write.Cell] = true
+	}
+	ok = a.structuralOp("Paste", func() error {
+		targetRef := engine.Ref{
+			Sheet: a.sheet, MinCol: targetCol, MinRow: targetRow,
+			MaxCol: min(targetCol+block.Cols()-1, engine.MaxCols),
+			MaxRow: min(targetRow+block.Rows()-1, engine.MaxRows),
+		}
+		if len(a.wb.MergedRangesOverlapping(a.sheet, targetRef)) > 0 {
+			if err := a.wb.UnmergeRange(a.sheet, targetRef); err != nil {
+				return err
 			}
 		}
-	}
 
-	for _, wr := range writes {
-		before := a.wb.RawContent(wr.Sheet, wr.Cell)
-		if before == wr.Content {
-			continue
+		if block.Cut && srcErr == nil {
+			sourceRef := engine.Ref{
+				Sheet: block.SourceSheet, MinCol: srcCol, MinRow: srcRow,
+				MaxCol: srcCol + block.Cols() - 1, MaxRow: srcRow + block.Rows() - 1,
+			}
+			if len(a.wb.MergedRangesOverlapping(block.SourceSheet, sourceRef)) > 0 {
+				if err := a.wb.UnmergeRange(block.SourceSheet, sourceRef); err != nil {
+					return err
+				}
+			}
+			for r := 0; r < block.Rows(); r++ {
+				for c := 0; c < block.Cols(); c++ {
+					cell := engine.CellName(srcCol+c, srcRow+r)
+					if targets[block.SourceSheet+"!"+cell] {
+						continue
+					}
+					if err := a.wb.SetCell(block.SourceSheet, cell, ""); err != nil {
+						return err
+					}
+					if err := a.wb.ApplyCellMetadata(block.SourceSheet, cell, document.CellMetadata{}); err != nil {
+						return err
+					}
+				}
+			}
 		}
-		if err := a.wb.SetCell(wr.Sheet, wr.Cell, wr.Content); err != nil {
-			a.statusMsg = err.Error()
-			continue
-		}
-		edits = append(edits, undo.CellEdit{Sheet: wr.Sheet, Cell: wr.Cell, Before: before, After: wr.Content})
-	}
 
-	// A move drags references along with it: every formula that pointed
-	// into the cut range — including formulas inside the moved block, which
-	// were pasted verbatim — is rewritten to the new location, inside the
-	// same undo command.
-	if block.Cut && srcErr == nil {
-		move := engine.MoveSpec{
-			From: engine.Ref{
-				Sheet:  block.SourceSheet,
-				MinCol: srcCol,
-				MinRow: srcRow,
-				MaxCol: srcCol + block.Cols() - 1,
-				MaxRow: srcRow + block.Rows() - 1,
-			},
-			ToSheet: a.sheet,
-			DCol:    a.cursor.Col - srcCol,
-			DRow:    a.cursor.Row - srcRow,
+		for _, write := range writes {
+			if err := a.wb.SetCell(write.Sheet, write.Cell, write.Content); err != nil {
+				return err
+			}
+			col, row, _ := engine.ParseCellName(write.Cell)
+			r, c := row-targetRow, col-targetCol
+			if r < len(block.Metadata) && c < len(block.Metadata[r]) {
+				if err := a.wb.ApplyCellMetadata(write.Sheet, write.Cell, block.Metadata[r][c]); err != nil {
+					return err
+				}
+			}
 		}
-		for _, rw := range a.wb.RetargetReferences(move) {
-			edits = append(edits, undo.CellEdit{Sheet: rw.Sheet, Cell: rw.Cell, Before: rw.Before, After: rw.After})
+		for _, merged := range block.Merges {
+			ref := engine.Ref{
+				Sheet:  a.sheet,
+				MinCol: targetCol + merged.MinCol, MinRow: targetRow + merged.MinRow,
+				MaxCol: targetCol + merged.MaxCol, MaxRow: targetRow + merged.MaxRow,
+			}
+			if ref.MaxCol <= engine.MaxCols && ref.MaxRow <= engine.MaxRows {
+				if err := a.wb.MergeRange(a.sheet, ref); err != nil {
+					return err
+				}
+			}
 		}
-	}
 
-	a.undoStack.Record(undo.Command{Label: "Paste", Edits: edits})
+		if block.Cut && srcErr == nil {
+			move := engine.MoveSpec{
+				From: engine.Ref{
+					Sheet: block.SourceSheet, MinCol: srcCol, MinRow: srcRow,
+					MaxCol: srcCol + block.Cols() - 1, MaxRow: srcRow + block.Rows() - 1,
+				},
+				ToSheet: a.sheet,
+				DCol:    targetCol - srcCol,
+				DRow:    targetRow - srcRow,
+			}
+			if _, err := a.wb.RetargetReferences(move); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if !ok {
+		return
+	}
+	a.statusMsg = "Pasted"
 	if block.Cut {
 		a.register.Clear()
 	}

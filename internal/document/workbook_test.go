@@ -149,7 +149,7 @@ func TestRawContentRoundTripsThroughSetCell(t *testing.T) {
 		{"42", "42"},
 		{"hello", "hello"},
 		{"=SUM(A1:A2)", "=SUM(A1:A2)"},
-		{"'123", "'123"},   // forced text keeps its guard
+		{"'123", "'123"}, // forced text keeps its guard
 		{"'=not a formula", "'=not a formula"},
 	}
 	for _, tt := range tests {
@@ -237,7 +237,10 @@ func TestRetargetReferencesUpdatesWatchersOnOtherSheets(t *testing.T) {
 		DCol:    1,
 		DRow:    4,
 	}
-	rewrites := w.RetargetReferences(move)
+	rewrites, err := w.RetargetReferences(move)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if len(rewrites) != 1 {
 		t.Fatalf("rewrites = %+v, want exactly one", rewrites)

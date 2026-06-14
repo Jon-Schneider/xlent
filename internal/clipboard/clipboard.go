@@ -23,7 +23,15 @@ type Block struct {
 	Contents    [][]string
 	Display     [][]string
 	Styles      [][]document.CellStyle
+	Metadata    [][]document.CellMetadata
+	Merges      []MergedRange
 	Cut         bool
+}
+
+// MergedRange is a zero-based merged rectangle relative to a block's
+// top-left cell.
+type MergedRange struct {
+	MinCol, MinRow, MaxCol, MaxRow int
 }
 
 // Rows and Cols report the block's dimensions.

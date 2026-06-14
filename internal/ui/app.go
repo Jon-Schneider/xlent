@@ -580,6 +580,12 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.sortSelection(true)
 	case actSortDesc:
 		a.sortSelection(false)
+	case actFillDown:
+		a.fillDown()
+	case actFillRight:
+		a.fillRight()
+	case actFillSeries:
+		a.fillSeries()
 	case actRecalc:
 		a.recalculateAll()
 	case actPrevSheet:
@@ -758,6 +764,11 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.toggleFontStyle(document.FontItalic, "Italic")
 	case "ctrl+u":
 		a.toggleFontStyle(document.FontUnderline, "Underline")
+
+	case "ctrl+d":
+		a.fillDown()
+	case "ctrl+r":
+		a.fillRight()
 
 	case "ctrl+f":
 		a.prompt.open(promptFind, "Find: ", a.lastSearch)

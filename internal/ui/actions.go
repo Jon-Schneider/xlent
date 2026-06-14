@@ -359,6 +359,123 @@ func (a *App) sortSelection(ascending bool) {
 	}
 }
 
+// fillDown copies the top cell of each selected column down over the rest of
+// the selection, shifting relative formula references like a copy/paste
+// (Excel's Ctrl+D). One undoable command.
+func (a *App) fillDown() {
+	sel := rectBetween(a.anchor, a.cursor)
+	if sel.MinRow == sel.MaxRow {
+		return
+	}
+	var edits []undo.CellEdit
+	for col := sel.MinCol; col <= sel.MaxCol; col++ {
+		src := a.wb.RawContent(a.sheet, engine.CellName(col, sel.MinRow))
+		for row := sel.MinRow + 1; row <= sel.MaxRow; row++ {
+			edits = a.fillCell(edits, col, row, src, 0, row-sel.MinRow)
+		}
+	}
+	a.undoStack.Record(undo.Command{Label: "Fill Down", Edits: edits})
+	a.statusMsg = "Filled down"
+}
+
+// fillRight copies the leftmost cell of each selected row across the rest of
+// the selection (Excel's Ctrl+R).
+func (a *App) fillRight() {
+	sel := rectBetween(a.anchor, a.cursor)
+	if sel.MinCol == sel.MaxCol {
+		return
+	}
+	var edits []undo.CellEdit
+	for row := sel.MinRow; row <= sel.MaxRow; row++ {
+		src := a.wb.RawContent(a.sheet, engine.CellName(sel.MinCol, row))
+		for col := sel.MinCol + 1; col <= sel.MaxCol; col++ {
+			edits = a.fillCell(edits, col, row, src, col-sel.MinCol, 0)
+		}
+	}
+	a.undoStack.Record(undo.Command{Label: "Fill Right", Edits: edits})
+	a.statusMsg = "Filled right"
+}
+
+// fillCell writes one filled cell, shifting a formula's relative references by
+// (dCol,dRow), and appends the resulting edit. Unchanged cells are skipped.
+func (a *App) fillCell(edits []undo.CellEdit, col, row int, src string, dCol, dRow int) []undo.CellEdit {
+	content := src
+	if strings.HasPrefix(content, "=") {
+		content = engine.AdjustFormula(content, dCol, dRow)
+	}
+	cell := engine.CellName(col, row)
+	before := a.wb.RawContent(a.sheet, cell)
+	if before == content {
+		return edits
+	}
+	if err := a.wb.SetCell(a.sheet, cell, content); err != nil {
+		a.statusMsg = err.Error()
+		return edits
+	}
+	return append(edits, undo.CellEdit{Sheet: a.sheet, Cell: cell, Before: before, After: content})
+}
+
+// fillSeries extends a linear numeric series across the selection. The step is
+// inferred from the first two cells along the fill axis (the taller dimension);
+// a single seed cell steps by 1. Non-numeric seeds fall back to filling.
+func (a *App) fillSeries() {
+	sel := rectBetween(a.anchor, a.cursor)
+	if sel.isSingleCell() {
+		return
+	}
+	vertical := sel.MaxRow-sel.MinRow >= sel.MaxCol-sel.MinCol
+
+	var edits []undo.CellEdit
+	if vertical {
+		for col := sel.MinCol; col <= sel.MaxCol; col++ {
+			edits = a.fillSeriesLine(edits, col, sel.MinRow, 0, 1, sel.MaxRow-sel.MinRow+1)
+		}
+	} else {
+		for row := sel.MinRow; row <= sel.MaxRow; row++ {
+			edits = a.fillSeriesLine(edits, sel.MinCol, row, 1, 0, sel.MaxCol-sel.MinCol+1)
+		}
+	}
+	a.undoStack.Record(undo.Command{Label: "Fill Series", Edits: edits})
+	a.statusMsg = "Filled series"
+}
+
+// fillSeriesLine fills one row or column of a numeric series of length n,
+// starting at (startCol,startRow) and advancing by (dCol,dRow) per step. The
+// first two seed cells set start and step; if the second is missing or
+// non-numeric the step is 1.
+func (a *App) fillSeriesLine(edits []undo.CellEdit, startCol, startRow, dCol, dRow, n int) []undo.CellEdit {
+	first, ok := parseSeriesNumber(a.wb.DisplayValue(a.sheet, engine.CellName(startCol, startRow)))
+	if !ok {
+		return edits // non-numeric seed: leave the line untouched
+	}
+	step := 1.0
+	if n >= 2 {
+		if second, ok := parseSeriesNumber(a.wb.DisplayValue(a.sheet, engine.CellName(startCol+dCol, startRow+dRow))); ok {
+			step = second - first
+		}
+	}
+	for i := 1; i < n; i++ {
+		col, row := startCol+dCol*i, startRow+dRow*i
+		content := trimFloat(first + step*float64(i))
+		cell := engine.CellName(col, row)
+		before := a.wb.RawContent(a.sheet, cell)
+		if before == content {
+			continue
+		}
+		if err := a.wb.SetCell(a.sheet, cell, content); err != nil {
+			a.statusMsg = err.Error()
+			continue
+		}
+		edits = append(edits, undo.CellEdit{Sheet: a.sheet, Cell: cell, Before: before, After: content})
+	}
+	return edits
+}
+
+func parseSeriesNumber(s string) (float64, bool) {
+	n, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
+	return n, err == nil
+}
+
 // recalculateAll forces a full workbook recompute (Excel's F9), refreshing
 // volatile formulas and any value the incremental graph couldn't know to
 // invalidate. It does not change content, so it isn't undoable.

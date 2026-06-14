@@ -44,6 +44,9 @@ const (
 	actUnderline
 	actSortAsc
 	actSortDesc
+	actFillDown
+	actFillRight
+	actFillSeries
 	actRecalc
 	actPrevSheet
 	actNextSheet
@@ -114,6 +117,10 @@ func defaultMenus() []menu {
 		{title: "Data", items: []menuItem{
 			{label: "Sort Ascending", action: actSortAsc},
 			{label: "Sort Descending", action: actSortDesc},
+			divider,
+			{label: "Fill Down", shortcut: "Ctrl+D", action: actFillDown},
+			{label: "Fill Right", shortcut: "Ctrl+R", action: actFillRight},
+			{label: "Fill Series", action: actFillSeries},
 		}},
 		{title: "View", items: []menuItem{
 			{label: "Recalculate All", shortcut: "F9", action: actRecalc},

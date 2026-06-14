@@ -542,6 +542,12 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		return a, a.copySelection(false)
 	case actPaste:
 		a.pasteFromRegister()
+	case actPasteValues:
+		a.pasteSpecial(pasteValues)
+	case actPasteTranspose:
+		a.pasteSpecial(pasteTranspose)
+	case actPasteFormats:
+		a.pasteSpecial(pasteFormats)
 	case actClear:
 		a.clearSelection()
 	case actInsertRows:

@@ -8,15 +8,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Jon-Schneider/xlent/internal/document"
 	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
-// Block is a rectangular snapshot of cell raw contents taken at copy/cut
-// time. Contents is row-major; empty cells are empty strings.
+// Block is a rectangular snapshot of cells taken at copy/cut time. Contents
+// (raw formulas/values) drives normal paste; Display (computed values) and
+// Styles support Paste Special. All three are row-major and parallel; empty
+// cells are empty. Display and Styles may be nil for blocks captured before
+// Paste Special existed or by callers that don't need them.
 type Block struct {
 	SourceSheet string
 	SourceCell  string // A1 name of the block's top-left cell
 	Contents    [][]string
+	Display     [][]string
+	Styles      [][]document.CellStyle
 	Cut         bool
 }
 

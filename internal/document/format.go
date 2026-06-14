@@ -99,6 +99,69 @@ scan:
 	return nil
 }
 
+// CellStyle is a transferable snapshot of the style attributes xlent can set:
+// the number format and font emphasis. Paste Special (formats) copies it from
+// one cell to another.
+type CellStyle struct {
+	NumFmtID     int
+	NumFmtCustom string
+	Bold         bool
+	Italic       bool
+	Underline    bool
+}
+
+// CellStyleAt reads a cell's transferable style snapshot.
+func (w *Workbook) CellStyleAt(sheet, cellName string) CellStyle {
+	id, err := w.file.GetCellStyle(sheet, cellName)
+	if err != nil {
+		return CellStyle{}
+	}
+	out := CellStyle{}
+	if st, err := w.file.GetStyle(id); err == nil && st != nil {
+		out.NumFmtID = st.NumFmt
+		if st.CustomNumFmt != nil {
+			out.NumFmtCustom = *st.CustomNumFmt
+		}
+		if st.Font != nil {
+			out.Bold = st.Font.Bold
+			out.Italic = st.Font.Italic
+			out.Underline = st.Font.Underline != "" && st.Font.Underline != "none"
+		}
+	}
+	return out
+}
+
+// ApplyCellStyle writes a transferable style snapshot onto a cell, preserving
+// the cell's content. Like SetNumberFormat, it busts excelize's per-cell calc
+// cache for formula cells and drops the cached display value.
+func (w *Workbook) ApplyCellStyle(sheet, cellName string, s CellStyle) error {
+	node, cell, err := w.node(sheet, cellName)
+	if err != nil {
+		return err
+	}
+	style := &excelize.Style{NumFmt: s.NumFmtID, Font: &excelize.Font{Bold: s.Bold, Italic: s.Italic}}
+	if s.NumFmtCustom != "" {
+		custom := s.NumFmtCustom
+		style.CustomNumFmt = &custom
+	}
+	if s.Underline {
+		style.Font.Underline = "single"
+	}
+	id, err := w.file.NewStyle(style)
+	if err != nil {
+		return fmt.Errorf("build style: %w", err)
+	}
+	if err := w.file.SetCellStyle(sheet, cell, cell, id); err != nil {
+		return fmt.Errorf("style %s!%s: %w", sheet, cell, err)
+	}
+	if formula, _ := w.file.GetCellFormula(sheet, cell); formula != "" {
+		_ = w.file.SetCellFormula(sheet, cell, formula)
+	}
+	delete(w.values, node)
+	w.dirty = true
+	return nil
+}
+
 // CellEmphasis reports the cell's font emphasis for grid rendering. Results
 // are cached per style ID — styles are immutable once created, so the cache
 // only ever grows within one workbook's life.

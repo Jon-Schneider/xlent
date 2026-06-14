@@ -23,6 +23,9 @@ const (
 	actCut
 	actCopy
 	actPaste
+	actPasteValues
+	actPasteTranspose
+	actPasteFormats
 	actClear
 	actInsertRows
 	actInsertCols
@@ -87,6 +90,9 @@ func defaultMenus() []menu {
 			{label: "Cut", shortcut: "Ctrl+X", action: actCut},
 			{label: "Copy", shortcut: "Ctrl+C", action: actCopy},
 			{label: "Paste", shortcut: "Ctrl+V", action: actPaste},
+			{label: "Paste Values", action: actPasteValues},
+			{label: "Paste Transpose", action: actPasteTranspose},
+			{label: "Paste Formats", action: actPasteFormats},
 			{label: "Clear", shortcut: "Del", action: actClear},
 			divider,
 			{label: "Insert Rows", shortcut: "Ctrl++", action: actInsertRows},

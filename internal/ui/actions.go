@@ -78,22 +78,28 @@ func (a *App) copySelection(cut bool) tea.Cmd {
 
 	contents := make([][]string, 0, sel.MaxRow-sel.MinRow+1)
 	display := make([][]string, 0, sel.MaxRow-sel.MinRow+1)
+	styles := make([][]document.CellStyle, 0, sel.MaxRow-sel.MinRow+1)
 	for row := sel.MinRow; row <= sel.MaxRow; row++ {
 		rawRow := make([]string, 0, sel.MaxCol-sel.MinCol+1)
 		dispRow := make([]string, 0, sel.MaxCol-sel.MinCol+1)
+		styleRow := make([]document.CellStyle, 0, sel.MaxCol-sel.MinCol+1)
 		for col := sel.MinCol; col <= sel.MaxCol; col++ {
 			cell := engine.CellName(col, row)
 			rawRow = append(rawRow, a.wb.RawContent(a.sheet, cell))
 			dispRow = append(dispRow, a.wb.DisplayValue(a.sheet, cell))
+			styleRow = append(styleRow, a.wb.CellStyleAt(a.sheet, cell))
 		}
 		contents = append(contents, rawRow)
 		display = append(display, dispRow)
+		styles = append(styles, styleRow)
 	}
 
 	a.register.Put(clipboard.Block{
 		SourceSheet: a.sheet,
 		SourceCell:  engine.CellName(sel.MinCol, sel.MinRow),
 		Contents:    contents,
+		Display:     display,
+		Styles:      styles,
 		Cut:         cut,
 	})
 	if cut {
@@ -187,6 +193,133 @@ func (a *App) pasteFromRegister() {
 	if block.Cut {
 		a.register.Clear()
 	}
+}
+
+// pasteMode selects a Paste Special variant.
+type pasteMode int
+
+const (
+	pasteValues    pasteMode = iota // computed values, dropping formulas
+	pasteTranspose                  // contents with rows and columns swapped
+	pasteFormats                    // number format and font emphasis only
+)
+
+// pasteSpecial pastes the register block at the cursor in one of the Paste
+// Special modes. Values and Transpose are content edits (cell-edit undo);
+// Formats changes only styling and is snapshot-undoable.
+func (a *App) pasteSpecial(mode pasteMode) {
+	block, ok := a.register.Get()
+	if !ok {
+		a.statusMsg = "Nothing to paste"
+		return
+	}
+	switch mode {
+	case pasteValues:
+		a.pasteValues(block)
+	case pasteTranspose:
+		a.pasteTranspose(block)
+	case pasteFormats:
+		a.pasteFormats(block)
+	}
+}
+
+// pasteValues writes the block's computed values as literals at the cursor,
+// dropping formulas. Thousands separators are stripped so formatted numbers
+// stay numeric on re-entry.
+func (a *App) pasteValues(block clipboard.Block) {
+	var edits []undo.CellEdit
+	for r, row := range block.Display {
+		for c, val := range row {
+			col, rw := a.cursor.Col+c, a.cursor.Row+r
+			if col > engine.MaxCols || rw > engine.MaxRows {
+				continue
+			}
+			edits = a.writeCellEdit(edits, col, rw, valueForPaste(val))
+		}
+	}
+	a.undoStack.Record(undo.Command{Label: "Paste Values", Edits: edits})
+	a.statusMsg = "Pasted values"
+}
+
+// pasteTranspose writes the block rotated so block cell (r,c) lands at
+// (cursor+r down, cursor+c right) swapped — row r, col c maps to col r, row c.
+// Each formula's relative references are shifted by that cell's own delta.
+func (a *App) pasteTranspose(block clipboard.Block) {
+	sCol, sRow, err := engine.ParseCellName(block.SourceCell)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	var edits []undo.CellEdit
+	for r, row := range block.Contents {
+		for c, content := range row {
+			col, rw := a.cursor.Col+r, a.cursor.Row+c // transposed target
+			if col > engine.MaxCols || rw > engine.MaxRows {
+				continue
+			}
+			if !block.Cut && strings.HasPrefix(content, "=") {
+				content = engine.AdjustFormula(content, col-(sCol+c), rw-(sRow+r))
+			}
+			edits = a.writeCellEdit(edits, col, rw, content)
+		}
+	}
+	a.undoStack.Record(undo.Command{Label: "Paste Transpose", Edits: edits})
+	a.statusMsg = "Pasted transposed"
+}
+
+// pasteFormats copies only the block's number format and font emphasis onto
+// the target rectangle, leaving cell contents alone. Snapshot-undoable, like
+// other formatting changes.
+func (a *App) pasteFormats(block clipboard.Block) {
+	if len(block.Styles) == 0 {
+		a.statusMsg = "Nothing to paste"
+		return
+	}
+	if a.structuralOp("Paste Formats", func() error {
+		for r, row := range block.Styles {
+			for c, st := range row {
+				col, rw := a.cursor.Col+c, a.cursor.Row+r
+				if col > engine.MaxCols || rw > engine.MaxRows {
+					continue
+				}
+				if err := a.wb.ApplyCellStyle(a.sheet, engine.CellName(col, rw), st); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}) {
+		a.statusMsg = "Pasted formats"
+	}
+}
+
+// writeCellEdit sets one cell and appends the resulting edit, skipping cells
+// whose content wouldn't change.
+func (a *App) writeCellEdit(edits []undo.CellEdit, col, row int, content string) []undo.CellEdit {
+	cell := engine.CellName(col, row)
+	before := a.wb.RawContent(a.sheet, cell)
+	if before == content {
+		return edits
+	}
+	if err := a.wb.SetCell(a.sheet, cell, content); err != nil {
+		a.statusMsg = err.Error()
+		return edits
+	}
+	return append(edits, undo.CellEdit{Sheet: a.sheet, Cell: cell, Before: before, After: content})
+}
+
+// valueForPaste prepares a displayed value for paste-as-value: a number with
+// thousands separators is stripped so it re-enters as a number rather than
+// text; everything else passes through.
+func valueForPaste(display string) string {
+	if display == "" {
+		return ""
+	}
+	stripped := strings.ReplaceAll(display, ",", "")
+	if _, err := strconv.ParseFloat(stripped, 64); err == nil {
+		return stripped
+	}
+	return display
 }
 
 // pasteExternal pastes bracketed-paste text from the terminal: multi-cell

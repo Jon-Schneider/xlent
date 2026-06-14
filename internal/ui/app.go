@@ -1122,6 +1122,11 @@ func (a *App) renderStatusBar(width int) string {
 	if a.editor.active && a.editor.pointing {
 		right = "Point"
 	}
+	// Flag a formula xlent can't evaluate correctly, so its displayed value
+	// isn't silently trusted. The status message, when present, wins.
+	if warn := a.wb.FormulaWarning(a.sheet, a.cursor.cellName()); warn != "" {
+		right = "⚠ " + warn
+	}
 	if a.statusMsg != "" {
 		right = a.statusMsg
 	}

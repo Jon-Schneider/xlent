@@ -303,6 +303,22 @@ func (w *Workbook) evaluate(sheet, cell string) string {
 	return "#VALUE!"
 }
 
+// FormulaWarning returns a short label when the cell holds a formula using a
+// construct xlent can't evaluate correctly (dynamic arrays, array constants,
+// structured references), or "" otherwise. The UI surfaces it so a displayed
+// value isn't silently trusted.
+func (w *Workbook) FormulaWarning(sheet, cellName string) string {
+	_, cell, err := w.node(sheet, cellName)
+	if err != nil {
+		return ""
+	}
+	formula, _ := w.file.GetCellFormula(sheet, cell)
+	if formula == "" {
+		return ""
+	}
+	return engine.UnsupportedConstruct(formula)
+}
+
 // UsedRange returns the extent of content on the sheet as (maxCol, maxRow),
 // both 1-based; (0, 0) for an empty sheet.
 func (w *Workbook) UsedRange(sheet string) (maxCol, maxRow int) {

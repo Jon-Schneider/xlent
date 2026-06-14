@@ -598,6 +598,10 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.fillRight()
 	case actFillSeries:
 		a.fillSeries()
+	case actFreeze:
+		a.freezePanes()
+	case actUnfreeze:
+		a.unfreezePanes()
 	case actRecalc:
 		a.recalculateAll()
 	case actPrevSheet:
@@ -924,17 +928,38 @@ func (a *App) switchSheet(delta int) {
 func (a *App) scrollIntoView(p position) {
 	layout := a.computeLayout()
 
-	if p.Row < a.topRow {
-		a.topRow = p.Row
-	} else if p.Row > a.topRow+layout.rows-1 {
-		a.topRow = p.Row - layout.rows + 1
+	// Rows inside the frozen prefix are always visible; only scroll for rows
+	// below it, within the lines the scrollable region actually has.
+	if p.Row > layout.frozenRows {
+		frozenVisible := 0
+		for _, r := range layout.rowsList {
+			if r <= layout.frozenRows {
+				frozenVisible++
+			}
+		}
+		scrollLines := max(layout.rows-frozenVisible, 1)
+		if p.Row < a.topRow {
+			a.topRow = p.Row
+		} else if p.Row > a.topRow+scrollLines-1 {
+			a.topRow = p.Row - scrollLines + 1
+		}
+		if a.topRow <= layout.frozenRows {
+			a.topRow = layout.frozenRows + 1
+		}
 	}
 
-	if p.Col < a.leftCol {
-		a.leftCol = p.Col
-	} else {
-		for p.Col > a.lastFullyVisibleCol(a.computeLayout()) && a.leftCol < p.Col {
-			a.leftCol++
+	// Frozen columns are always visible; only scroll for columns to their
+	// right.
+	if p.Col > layout.frozenCols {
+		if p.Col < a.leftCol {
+			a.leftCol = p.Col
+		} else {
+			for p.Col > a.lastFullyVisibleCol(a.computeLayout()) && a.leftCol < p.Col {
+				a.leftCol++
+			}
+		}
+		if a.leftCol <= layout.frozenCols {
+			a.leftCol = layout.frozenCols + 1
 		}
 	}
 }
@@ -1064,14 +1089,20 @@ func (a *App) placeCursor(v *tea.View) {
 				break
 			}
 		}
-		row := a.cursor.Row
-		if colIdx < 0 || row < a.layout.topRow || row > a.layout.topRow+a.layout.rows-1 {
+		rowLine := -1
+		for i, r := range a.layout.rowsList {
+			if r == a.cursor.Row {
+				rowLine = i
+				break
+			}
+		}
+		if colIdx < 0 || rowLine < 0 {
 			return
 		}
 		w := a.colWidth(a.cursor.Col) - 2
 		_, offset := a.editor.window(w)
 		x := a.layout.colX[colIdx] + 1 + offset
-		y := a.layout.gridY0 + (row - a.layout.topRow)
+		y := a.layout.gridY0 + rowLine
 		v.Cursor = tea.NewCursor(x, y)
 	}
 }

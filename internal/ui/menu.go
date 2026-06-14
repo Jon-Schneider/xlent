@@ -51,6 +51,8 @@ const (
 	actFillDown
 	actFillRight
 	actFillSeries
+	actFreeze
+	actUnfreeze
 	actRecalc
 	actPrevSheet
 	actNextSheet
@@ -131,6 +133,9 @@ func defaultMenus() []menu {
 			{label: "Fill Series", action: actFillSeries},
 		}},
 		{title: "View", items: []menuItem{
+			{label: "Freeze Panes", action: actFreeze},
+			{label: "Unfreeze Panes", action: actUnfreeze},
+			divider,
 			{label: "Recalculate All", shortcut: "F9", action: actRecalc},
 			divider,
 			{label: "Previous Sheet", shortcut: "Ctrl+PgUp", action: actPrevSheet},

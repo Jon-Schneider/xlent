@@ -51,15 +51,18 @@ func (r rect) String() string {
 // gridLayout captures where everything landed during the last render so
 // mouse events can be hit-tested against it.
 type gridLayout struct {
-	gutterW int
-	headerY int   // screen line of the column header row
-	gridY0  int   // first screen line of grid cells
-	rows    int   // visible row count
-	topRow  int   // first visible sheet row
-	cols    []int // visible column numbers, left to right
-	colX    []int // screen x where each visible column starts
-	tabsY   int
-	tabX    [][2]int // x ranges of sheet tabs, parallel to workbook sheets
+	gutterW    int
+	headerY    int   // screen line of the column header row
+	gridY0     int   // first screen line of grid cells
+	rows       int   // number of grid lines available
+	topRow     int   // first scrollable sheet row (past the frozen region)
+	rowsList   []int // sheet row shown on each grid line, top to bottom
+	cols       []int // visible column numbers, left to right (frozen first)
+	colX       []int // screen x where each visible column starts
+	frozenRows int   // count of leading rows frozen in place
+	frozenCols int   // count of leading columns frozen in place
+	tabsY      int
+	tabX       [][2]int // x ranges of sheet tabs, parallel to workbook sheets
 }
 
 // colAt maps a screen x to a visible column number, or 0 if outside cells.
@@ -72,31 +75,69 @@ func (l gridLayout) colAt(x int) int {
 	return 0
 }
 
-// rowAt maps a screen y to a sheet row, or 0 if outside the grid area.
+// rowAt maps a screen y to a sheet row, or 0 if outside the grid area. It
+// consults the rendered row list so frozen and hidden (filtered) rows map
+// correctly.
 func (l gridLayout) rowAt(y int) int {
-	if y < l.gridY0 || y >= l.gridY0+l.rows {
+	line := y - l.gridY0
+	if line < 0 || line >= len(l.rowsList) {
 		return 0
 	}
-	return l.topRow + (y - l.gridY0)
+	return l.rowsList[line]
 }
 
 func (a *App) colWidth(col int) int {
 	return a.wb.ColWidth(a.sheet, col, defaultColWidth)
 }
 
-// computeLayout sizes the chrome and works out which columns and rows fit.
+// computeLayout sizes the chrome and works out which columns and rows fit,
+// honoring frozen panes (a leading block of rows/columns pinned in place) and
+// hidden rows (from an active filter). It also keeps the scroll origins past
+// the frozen region — an invariant the rest of the UI relies on.
 func (a *App) computeLayout() gridLayout {
 	width, height := max(a.width, 20), max(a.height, 7)
 
 	// Chrome: menu bar, formula bar, column header, sheet tabs, status bar.
-	rows := max(height-5, 1)
-	topRow := a.topRow
+	lines := max(height-5, 1)
+	frozenRows, frozenCols := a.wb.Freeze(a.sheet)
+	if a.topRow <= frozenRows {
+		a.topRow = frozenRows + 1
+	}
+	if a.leftCol <= frozenCols {
+		a.leftCol = frozenCols + 1
+	}
 
-	gutterW := max(4, len(strconv.Itoa(topRow+rows-1))+1)
+	// Visible rows: the frozen prefix, then scrollable rows from topRow,
+	// skipping any the filter hid.
+	var rowsList []int
+	for r := 1; r <= frozenRows && len(rowsList) < lines; r++ {
+		if !a.rowHidden(r) {
+			rowsList = append(rowsList, r)
+		}
+	}
+	for r := a.topRow; len(rowsList) < lines && r <= engine.MaxRows; r++ {
+		if a.rowHidden(r) {
+			continue
+		}
+		rowsList = append(rowsList, r)
+	}
 
-	var cols []int
-	var colX []int
+	maxRowShown := 1
+	for _, r := range rowsList {
+		if r > maxRowShown {
+			maxRowShown = r
+		}
+	}
+	gutterW := max(4, len(strconv.Itoa(maxRowShown))+1)
+
+	// Visible columns: the frozen prefix, then scrollable columns from leftCol.
+	var cols, colX []int
 	x := gutterW
+	for c := 1; c <= frozenCols && x < width; c++ {
+		cols = append(cols, c)
+		colX = append(colX, x)
+		x += a.colWidth(c)
+	}
 	for c := a.leftCol; x < width && c <= engine.MaxCols; c++ {
 		cols = append(cols, c)
 		colX = append(colX, x)
@@ -104,15 +145,24 @@ func (a *App) computeLayout() gridLayout {
 	}
 
 	return gridLayout{
-		gutterW: gutterW,
-		headerY: 2,
-		gridY0:  3,
-		rows:    rows,
-		topRow:  topRow,
-		cols:    cols,
-		colX:    colX,
-		tabsY:   height - 2,
+		gutterW:    gutterW,
+		headerY:    2,
+		gridY0:     3,
+		rows:       lines,
+		topRow:     a.topRow,
+		rowsList:   rowsList,
+		cols:       cols,
+		colX:       colX,
+		frozenRows: frozenRows,
+		frozenCols: frozenCols,
+		tabsY:      height - 2,
 	}
+}
+
+// rowHidden reports whether a row should be skipped when laying out the grid.
+// Freeze panes never hides rows; an active filter (added separately) does.
+func (a *App) rowHidden(row int) bool {
+	return false
 }
 
 // lastFullyVisibleCol reports the rightmost column that fits entirely on
@@ -163,9 +213,7 @@ func (a *App) renderGrid(layout gridLayout) string {
 	}
 	b.WriteByte('\n')
 
-	for i := 0; i < layout.rows; i++ {
-		row := layout.topRow + i
-
+	for i, row := range layout.rowsList {
 		gutterStyle := styleHeader
 		if row >= sel.MinRow && row <= sel.MaxRow {
 			gutterStyle = styleHeaderActive
@@ -213,6 +261,14 @@ func (a *App) renderGrid(layout gridLayout) string {
 
 			b.WriteString(style.Width(w).MaxWidth(w).Align(align).Padding(0, 1).Render(value))
 		}
+		if i < layout.rows-1 {
+			b.WriteByte('\n')
+		}
+	}
+	// Pad any unused grid lines (sheet exhausted or most rows filtered out) so
+	// the chrome below the grid keeps its place.
+	for i := len(layout.rowsList); i < layout.rows; i++ {
+		b.WriteString(styleCell.Width(a.width).Render(""))
 		if i < layout.rows-1 {
 			b.WriteByte('\n')
 		}

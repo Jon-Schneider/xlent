@@ -609,6 +609,33 @@ func parseSeriesNumber(s string) (float64, bool) {
 	return n, err == nil
 }
 
+// freezePanes freezes the rows above and columns left of the active cell,
+// Excel-style. It's a view/layout property (like column widths), so it isn't
+// undoable; it does round-trip through save.
+func (a *App) freezePanes() {
+	rows, cols := a.cursor.Row-1, a.cursor.Col-1
+	if rows == 0 && cols == 0 {
+		a.statusMsg = "Move below and right of the rows/columns to freeze first"
+		return
+	}
+	if err := a.wb.SetFreeze(a.sheet, rows, cols); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	a.topRow = max(a.topRow, rows+1)
+	a.leftCol = max(a.leftCol, cols+1)
+	a.statusMsg = fmt.Sprintf("Froze %d row(s) and %d column(s)", rows, cols)
+}
+
+// unfreezePanes clears any frozen panes on the active sheet.
+func (a *App) unfreezePanes() {
+	if err := a.wb.SetFreeze(a.sheet, 0, 0); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	a.statusMsg = "Unfroze panes"
+}
+
 // recalculateAll forces a full workbook recompute (Excel's F9), refreshing
 // volatile formulas and any value the incremental graph couldn't know to
 // invalidate. It does not change content, so it isn't undoable.

@@ -48,6 +48,14 @@ func (r Ref) Contains(n Node) bool {
 		n.Row >= r.MinRow && n.Row <= r.MaxRow
 }
 
+// Overlaps reports whether two references cover any cell in common. Sheet
+// names compare case-insensitively, matching Excel semantics.
+func (r Ref) Overlaps(o Ref) bool {
+	return strings.EqualFold(r.Sheet, o.Sheet) &&
+		r.MinCol <= o.MaxCol && r.MaxCol >= o.MinCol &&
+		r.MinRow <= o.MaxRow && r.MaxRow >= o.MinRow
+}
+
 // CellName converts 1-based coordinates to an A1-style name, e.g. (2,3) → "B3".
 func CellName(col, row int) string {
 	return ColumnName(col) + fmt.Sprintf("%d", row)

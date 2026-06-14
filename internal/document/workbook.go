@@ -303,6 +303,15 @@ func (w *Workbook) evaluate(sheet, cell string) string {
 	return "#VALUE!"
 }
 
+// FormulasReferencing reports how many formula cells reference any cell in the
+// given rectangle (inclusive, 1-based). It's used to warn before deleting rows
+// or columns, where excelize may corrupt such references instead of turning
+// them into #REF!.
+func (w *Workbook) FormulasReferencing(sheet string, minCol, minRow, maxCol, maxRow int) int {
+	region := engine.Ref{Sheet: sheet, MinCol: minCol, MinRow: minRow, MaxCol: maxCol, MaxRow: maxRow}
+	return len(w.graph.ReferencesInto(region))
+}
+
 // FormulaWarning returns a short label when the cell holds a formula using a
 // construct xlent can't evaluate correctly (dynamic arrays, array constants,
 // structured references), or "" otherwise. The UI surfaces it so a displayed

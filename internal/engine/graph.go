@@ -62,6 +62,23 @@ func (g *Graph) Nodes() []Node {
 	return out
 }
 
+// ReferencesInto returns formula cells with at least one reference overlapping
+// region. It's used to warn before a structural delete: excelize can silently
+// shift a reference that pointed into deleted cells to a neighbor instead of
+// producing #REF! the way Excel does.
+func (g *Graph) ReferencesInto(region Ref) []Node {
+	var out []Node
+	for n, refs := range g.deps {
+		for _, r := range refs {
+			if r.Overlaps(region) {
+				out = append(out, n)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // directDependents returns the formula cells that reference n directly,
 // sorted for deterministic traversal order.
 func (g *Graph) directDependents(n Node) []Node {

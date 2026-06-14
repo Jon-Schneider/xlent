@@ -50,6 +50,7 @@ func Load(path string) (*Workbook, error) {
 // normalized (lowercase function names won't evaluate); that rewrite is
 // semantically neutral, so it doesn't mark the workbook dirty.
 func (w *Workbook) rebuildGraph() {
+	w.loadNames()
 	sheets := w.Sheets()
 	for _, sheet := range sheets {
 		rows, err := w.file.GetRows(sheet)
@@ -69,7 +70,7 @@ func (w *Workbook) rebuildGraph() {
 					}
 				}
 				node := engine.Node{Sheet: sheet, Col: c + 1, Row: r + 1}
-				w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefs(sheet, formula)))
+				w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefsWithNames(sheet, formula, w.names)))
 				if engine.IsOpaqueFormula(formula) {
 					w.opaque[node] = true
 				}

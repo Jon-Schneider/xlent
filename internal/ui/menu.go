@@ -53,6 +53,8 @@ const (
 	actFillSeries
 	actFilter
 	actClearFilter
+	actDefineName
+	actDeleteName
 	actFreeze
 	actUnfreeze
 	actRecalc
@@ -136,6 +138,10 @@ func defaultMenus() []menu {
 			{label: "Fill Down", shortcut: "Ctrl+D", action: actFillDown},
 			{label: "Fill Right", shortcut: "Ctrl+R", action: actFillRight},
 			{label: "Fill Series", action: actFillSeries},
+		}},
+		{title: "Formulas", items: []menuItem{
+			{label: "Define Name…", action: actDefineName},
+			{label: "Delete Name…", action: actDeleteName},
 		}},
 		{title: "View", items: []menuItem{
 			{label: "Freeze Panes", action: actFreeze},

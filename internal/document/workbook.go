@@ -44,6 +44,10 @@ type Workbook struct {
 	// displayed value can't go stale.
 	opaque map[engine.Node]bool
 
+	// names maps each workbook defined name (upper-cased) to its target range,
+	// so formulas using a name depend on the cells it covers.
+	names map[string]engine.Ref
+
 	// extents caches UsedRange per sheet; cleared by any edit to that sheet.
 	extents map[string][2]int
 
@@ -64,6 +68,7 @@ func newWorkbook(f *excelize.File) *Workbook {
 		values:   make(map[engine.Node]string),
 		cyclic:   make(map[engine.Node]bool),
 		opaque:   make(map[engine.Node]bool),
+		names:    make(map[string]engine.Ref),
 		extents:  make(map[string][2]int),
 		emphasis: make(map[int][3]bool),
 	}
@@ -126,7 +131,7 @@ func (w *Workbook) SetCell(sheet, cellName, input string) error {
 		if err := w.file.SetCellFormula(sheet, cell, formula); err != nil {
 			return fmt.Errorf("set formula %s!%s: %w", sheet, cell, err)
 		}
-		w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefs(sheet, formula)))
+		w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefsWithNames(sheet, formula, w.names)))
 		if engine.IsOpaqueFormula(formula) {
 			w.opaque[node] = true
 		} else {

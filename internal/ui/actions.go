@@ -609,6 +609,46 @@ func parseSeriesNumber(s string) (float64, bool) {
 	return n, err == nil
 }
 
+// defineName creates or replaces a workbook defined name pointing at the
+// current selection, as one snapshot-undoable command. Formulas using the name
+// then depend on the cells it covers.
+func (a *App) defineName(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	sel := rectBetween(a.anchor, a.cursor)
+	refersTo := engine.QuoteSheetName(a.sheet) + "!" + absRange(sel)
+	if a.structuralOp("Define Name", func() error {
+		return a.wb.SetDefinedName(name, refersTo)
+	}) {
+		a.statusMsg = fmt.Sprintf("Defined %s = %s", name, refersTo)
+	}
+}
+
+// deleteName removes a workbook defined name (snapshot-undoable).
+func (a *App) deleteName(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	if a.structuralOp("Delete Name", func() error {
+		return a.wb.DeleteDefinedName(name)
+	}) {
+		a.statusMsg = "Deleted name " + name
+	}
+}
+
+// absRange renders a selection as an absolute A1 range ("$A$1:$B$2", or
+// "$A$1" for a single cell) for storing in a defined name.
+func absRange(sel rect) string {
+	tl := "$" + engine.ColumnName(sel.MinCol) + "$" + strconv.Itoa(sel.MinRow)
+	if sel.isSingleCell() {
+		return tl
+	}
+	return tl + ":$" + engine.ColumnName(sel.MaxCol) + "$" + strconv.Itoa(sel.MaxRow)
+}
+
 // freezePanes freezes the rows above and columns left of the active cell,
 // Excel-style. It's a view/layout property (like column widths), so it isn't
 // undoable; it does round-trip through save.
@@ -747,6 +787,11 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 
 	case promptGoTo:
 		a.goToRef(text)
+
+	case promptDefineName:
+		a.defineName(text)
+	case promptDeleteName:
+		a.deleteName(text)
 
 	case promptRenameSheet:
 		a.renameSheet(text)

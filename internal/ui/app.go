@@ -607,6 +607,10 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.openFilter()
 	case actClearFilter:
 		a.clearFilter()
+	case actDefineName:
+		a.prompt.open(promptDefineName, "Define name: ", "")
+	case actDeleteName:
+		a.prompt.open(promptDeleteName, "Delete name: ", "")
 	case actFreeze:
 		a.freezePanes()
 	case actUnfreeze:

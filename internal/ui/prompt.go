@@ -13,6 +13,8 @@ const (
 	promptReplaceWith // "With:" — capture the replacement and run replace-all
 	promptGoTo
 	promptFilter
+	promptDefineName
+	promptDeleteName
 	promptRenameSheet
 	promptConfirmDirty // "Save changes before <pending>? (y/n)"
 )

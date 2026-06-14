@@ -39,6 +39,9 @@ type App struct {
 	menus   []menu
 	menuBar menuBar
 
+	// attributions is the Help ▸ Attributions panel state (open/scroll).
+	attributions attributionsOverlay
+
 	// keyboardEnhanced reports whether the terminal supports the kitty
 	// keyboard protocol (Tier 1 in the spec). When false, shortcuts like
 	// Ctrl+Shift+Arrow are unavailable and fallbacks apply.
@@ -111,6 +114,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch {
+		case a.attributions.open:
+			return a.handleAttributionsKey(msg)
 		case a.prompt.active():
 			return a.handlePromptKey(msg)
 		case a.menuBar.open:
@@ -633,6 +638,8 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.deleteSheet()
 	case actAbout:
 		a.statusMsg = "xlent — an Excel-style terminal spreadsheet. F10 or click for menus."
+	case actAttributions:
+		a.attributions.openPanel()
 	}
 	return a, nil
 }
@@ -1090,7 +1097,7 @@ func (a *App) View() tea.View {
 	b.WriteByte('\n')
 	b.WriteString(a.renderStatusBar(width))
 
-	v := tea.NewView(a.overlayDropdown(b.String()))
+	v := tea.NewView(a.overlayAttributions(a.overlayDropdown(b.String())))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = a.windowTitle()

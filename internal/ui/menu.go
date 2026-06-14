@@ -66,6 +66,7 @@ const (
 	actRenameSheet
 	actDeleteSheet
 	actAbout
+	actAttributions
 )
 
 type menuItem struct {
@@ -163,6 +164,7 @@ func defaultMenus() []menu {
 		}},
 		{title: "Help", items: []menuItem{
 			{label: "About xlent", action: actAbout},
+			{label: "Attributions…", action: actAttributions},
 		}},
 	}
 }

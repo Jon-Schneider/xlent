@@ -52,6 +52,10 @@ type App struct {
 	// in the Find prompt.
 	lastSearch string
 
+	// replaceFind holds the search term captured by the first step of Find and
+	// Replace while the second step (the replacement) is being entered.
+	replaceFind string
+
 	// colResize tracks an in-progress column-width drag started on a column
 	// edge in the header row.
 	colResize colResize
@@ -552,6 +556,8 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.selectUsedRange()
 	case actFind:
 		a.prompt.open(promptFind, "Find: ", a.lastSearch)
+	case actReplace:
+		a.prompt.open(promptReplaceFind, "Replace: ", a.lastSearch)
 	case actGoTo:
 		a.prompt.open(promptGoTo, "Go to: ", "")
 	case actFmtGeneral:
@@ -774,6 +780,8 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.prompt.open(promptFind, "Find: ", a.lastSearch)
 	case "f3":
 		a.findNext(a.lastSearch)
+	case "ctrl+h":
+		a.prompt.open(promptReplaceFind, "Replace: ", a.lastSearch)
 	case "ctrl+g":
 		a.prompt.open(promptGoTo, "Go to: ", "")
 

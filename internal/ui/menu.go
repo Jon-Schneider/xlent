@@ -30,6 +30,7 @@ const (
 	actDeleteCols
 	actSelectAll
 	actFind
+	actReplace
 	actGoTo
 	actFmtGeneral
 	actFmtNumber
@@ -94,6 +95,7 @@ func defaultMenus() []menu {
 			{label: "Delete Columns", action: actDeleteCols},
 			divider,
 			{label: "Find…", shortcut: "Ctrl+F", action: actFind},
+			{label: "Replace…", shortcut: "Ctrl+H", action: actReplace},
 			{label: "Go To…", shortcut: "Ctrl+G", action: actGoTo},
 			divider,
 			{label: "Select All", shortcut: "Ctrl+A", action: actSelectAll},

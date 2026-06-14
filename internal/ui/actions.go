@@ -528,7 +528,8 @@ func (a *App) save() {
 // submitPrompt dispatches on the prompt kind; see promptKind for the flows.
 func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 	kind := a.prompt.kind
-	text := strings.TrimSpace(a.prompt.String())
+	raw := a.prompt.String()
+	text := strings.TrimSpace(raw)
 	pending := a.prompt.pending
 	a.prompt.close()
 
@@ -565,6 +566,21 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 	case promptFind:
 		a.lastSearch = text
 		a.findNext(text)
+
+	case promptReplaceFind:
+		// Step one captured the search term; ask for the replacement next.
+		// Spaces are significant in both, so the raw text is kept.
+		a.replaceFind = raw
+		a.lastSearch = text
+		if raw == "" {
+			a.statusMsg = "Nothing to replace"
+			return a, nil
+		}
+		a.prompt.open(promptReplaceWith, "With: ", "")
+
+	case promptReplaceWith:
+		a.replaceAll(a.replaceFind, raw)
+		a.replaceFind = ""
 
 	case promptGoTo:
 		a.goToRef(text)
@@ -657,6 +673,66 @@ func (a *App) findNext(term string) {
 		}
 	}
 	a.statusMsg = fmt.Sprintf("%q not found", term)
+}
+
+// replaceAll replaces every case-insensitive occurrence of find with repl
+// across the used range, in cell raw content (so formulas are included, like
+// Excel). It is one undoable command and reports how many cells changed.
+func (a *App) replaceAll(find, repl string) {
+	if find == "" {
+		a.statusMsg = "Nothing to replace"
+		return
+	}
+	maxCol, maxRow := a.wb.UsedRange(a.sheet)
+	var edits []undo.CellEdit
+	occurrences := 0
+	for row := 1; row <= maxRow; row++ {
+		for col := 1; col <= maxCol; col++ {
+			cell := engine.CellName(col, row)
+			before := a.wb.RawContent(a.sheet, cell)
+			after, n := replaceAllFold(before, find, repl)
+			if n == 0 || after == before {
+				continue
+			}
+			if err := a.wb.SetCell(a.sheet, cell, after); err != nil {
+				a.statusMsg = err.Error()
+				continue
+			}
+			occurrences += n
+			edits = append(edits, undo.CellEdit{Sheet: a.sheet, Cell: cell, Before: before, After: after})
+		}
+	}
+	if len(edits) == 0 {
+		a.statusMsg = fmt.Sprintf("%q not found", find)
+		return
+	}
+	a.undoStack.Record(undo.Command{Label: "Replace", Edits: edits})
+	a.statusMsg = fmt.Sprintf("Replaced %d occurrence(s) in %d cell(s)", occurrences, len(edits))
+}
+
+// replaceAllFold replaces every case-insensitive occurrence of old in s with
+// repl, returning the result and the number of substitutions. Matching is
+// ASCII-case-insensitive to mirror Find; replacement text is inserted as-is.
+func replaceAllFold(s, old, repl string) (string, int) {
+	if old == "" {
+		return s, 0
+	}
+	lowerS, lowerOld := strings.ToLower(s), strings.ToLower(old)
+	var b strings.Builder
+	count, i := 0, 0
+	for {
+		j := strings.Index(lowerS[i:], lowerOld)
+		if j < 0 {
+			b.WriteString(s[i:])
+			break
+		}
+		j += i
+		b.WriteString(s[i:j])
+		b.WriteString(repl)
+		count++
+		i = j + len(old)
+	}
+	return b.String(), count
 }
 
 // goToRef jumps to a typed reference: a cell puts the cursor there, a range

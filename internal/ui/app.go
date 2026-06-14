@@ -87,7 +87,7 @@ func NewApp(path string) (*App, error) {
 		return nil, err
 	}
 
-	return &App{
+	app := &App{
 		wb:        wb,
 		sheet:     wb.Sheets()[0],
 		cursor:    position{Col: 1, Row: 1},
@@ -96,7 +96,9 @@ func NewApp(path string) (*App, error) {
 		leftCol:   1,
 		undoStack: undo.NewStack(),
 		menus:     defaultMenus(),
-	}, nil
+	}
+	app.resetActiveSheetPosition()
+	return app, nil
 }
 
 func (a *App) Init() tea.Cmd {
@@ -394,10 +396,20 @@ func (a *App) pointArrow(dCol, dRow int, extend bool) bool {
 	if e.pointing {
 		base = e.pointPos
 	}
-	np := position{
-		Col: clamp(base.Col+dCol, 1, engine.MaxCols),
-		Row: clamp(base.Row+dRow, 1, engine.MaxRows),
+	col, row := base.Col+dCol, base.Row+dRow
+	if merged, ok := a.wb.MergedRangeAt(a.sheet, base.Col, base.Row); ok {
+		if dCol > 0 {
+			col = merged.MaxCol + dCol
+		} else if dCol < 0 {
+			col = merged.MinCol + dCol
+		}
+		if dRow > 0 {
+			row = merged.MaxRow + dRow
+		} else if dRow < 0 {
+			row = merged.MinRow + dRow
+		}
 	}
+	np := a.normalizeNavigablePosition(position{Col: col, Row: row}, dCol, dRow)
 	if !e.pointing {
 		e.pointing = true
 		e.refStart = len(e.text)
@@ -414,6 +426,7 @@ func (a *App) pointArrow(dCol, dRow int, extend bool) bool {
 // pointTo aims the reference picker at an absolute cell (mouse pointing).
 // extend keeps the anchor for drag-ranges.
 func (a *App) pointTo(p position, extend bool) {
+	p = a.normalizeNavigablePosition(p, 1, 1)
 	e := &a.editor
 	if !e.pointing {
 		e.pointing = true
@@ -854,9 +867,21 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // moveCursor shifts the cursor by a delta, clamping to sheet bounds. When
 // extend is false the anchor follows the cursor (selection collapses).
 func (a *App) moveCursor(dCol, dRow int, extend bool) {
-	row := clamp(a.cursor.Row+dRow, 1, engine.MaxRows)
-	// With an active filter, vertical movement skips hidden rows so the cursor
-	// never lands on one that isn't drawn.
+	col, row := a.cursor.Col+dCol, a.cursor.Row+dRow
+	if merged, ok := a.wb.MergedRangeAt(a.sheet, a.cursor.Col, a.cursor.Row); ok {
+		if dCol > 0 {
+			col = merged.MaxCol + dCol
+		} else if dCol < 0 {
+			col = merged.MinCol + dCol
+		}
+		if dRow > 0 {
+			row = merged.MaxRow + dRow
+		} else if dRow < 0 {
+			row = merged.MinRow + dRow
+		}
+	}
+	col = clamp(col, 1, engine.MaxCols)
+	row = clamp(row, 1, engine.MaxRows)
 	if dRow != 0 && a.rowHidden(row) {
 		dir := 1
 		if dRow < 0 {
@@ -864,18 +889,49 @@ func (a *App) moveCursor(dCol, dRow int, extend bool) {
 		}
 		row = a.snapToVisibleRow(row, dir)
 	}
+	if dCol != 0 && !a.wb.ColVisible(a.sheet, col) {
+		dir := 1
+		if dCol < 0 {
+			dir = -1
+		}
+		col = a.snapToVisibleCol(col, dir)
+	}
 	a.setCursor(position{
-		Col: clamp(a.cursor.Col+dCol, 1, engine.MaxCols),
+		Col: col,
 		Row: row,
 	}, extend)
 }
 
 func (a *App) setCursor(p position, extend bool) {
+	p = a.normalizeNavigablePosition(p, 1, 1)
 	a.cursor = p
 	if !extend {
 		a.anchor = p
 	}
 	a.scrollIntoView(a.cursor)
+}
+
+func (a *App) normalizeNavigablePosition(p position, dCol, dRow int) position {
+	p.Col = clamp(p.Col, 1, engine.MaxCols)
+	p.Row = clamp(p.Row, 1, engine.MaxRows)
+	if a.rowHidden(p.Row) {
+		dir := 1
+		if dRow < 0 {
+			dir = -1
+		}
+		p.Row = a.snapToVisibleRow(p.Row, dir)
+	}
+	if !a.wb.ColVisible(a.sheet, p.Col) {
+		dir := 1
+		if dCol < 0 {
+			dir = -1
+		}
+		p.Col = a.snapToVisibleCol(p.Col, dir)
+	}
+	if merged, ok := a.wb.MergedRangeAt(a.sheet, p.Col, p.Row); ok {
+		p = position{Col: merged.MinCol, Row: merged.MinRow}
+	}
+	return p
 }
 
 // jumpCursor implements Ctrl+Arrow data-region jumps, Excel-style: from
@@ -960,9 +1016,7 @@ func (a *App) switchSheet(delta int) {
 			next := clamp(i+delta, 0, len(sheets)-1)
 			if next != i {
 				a.sheet = sheets[next]
-				a.cursor = position{Col: 1, Row: 1}
-				a.anchor = a.cursor
-				a.topRow, a.leftCol = 1, 1
+				a.resetActiveSheetPosition()
 			}
 			return
 		}
@@ -1021,8 +1075,7 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 				sheets := a.wb.Sheets()
 				if i < len(sheets) && sheets[i] != a.sheet {
 					a.sheet = sheets[i]
-					a.cursor, a.anchor = position{Col: 1, Row: 1}, position{Col: 1, Row: 1}
-					a.topRow, a.leftCol = 1, 1
+					a.resetActiveSheetPosition()
 				}
 				return
 			}
@@ -1143,7 +1196,7 @@ func (a *App) placeCursor(v *tea.View) {
 		if colIdx < 0 || rowLine < 0 {
 			return
 		}
-		w := a.colWidth(a.cursor.Col) - 2
+		w := a.cellRenderWidth(a.layout, a.cursor) - 2
 		_, offset := a.editor.window(w)
 		x := a.layout.colX[colIdx] + 1 + offset
 		y := a.layout.gridY0 + rowLine

@@ -900,8 +900,7 @@ func (a *App) deleteSheet() {
 	}) {
 		remaining := a.wb.Sheets()
 		a.sheet = remaining[min(idx, len(remaining)-1)]
-		a.cursor, a.anchor = position{Col: 1, Row: 1}, position{Col: 1, Row: 1}
-		a.topRow, a.leftCol = 1, 1
+		a.resetActiveSheetPosition()
 		a.statusMsg = "Deleted " + deleted
 	}
 }
@@ -915,8 +914,7 @@ func (a *App) ensureValidSheet() {
 		}
 	}
 	a.sheet = a.wb.Sheets()[0]
-	a.cursor, a.anchor = position{Col: 1, Row: 1}, position{Col: 1, Row: 1}
-	a.topRow, a.leftCol = 1, 1
+	a.resetActiveSheetPosition()
 }
 
 // findNext moves the cursor to the next cell whose content or displayed
@@ -1038,6 +1036,10 @@ func (a *App) goToRef(text string) {
 	if ref.Sheet != a.sheet {
 		a.sheet = ref.Sheet
 	}
+	if ref.MinCol == ref.MaxCol && ref.MinRow == ref.MaxRow {
+		a.setCursor(position{Col: ref.MinCol, Row: ref.MinRow}, false)
+		return
+	}
 	a.anchor = position{Col: ref.MaxCol, Row: ref.MaxRow}
 	a.cursor = position{Col: ref.MinCol, Row: ref.MinRow}
 	a.scrollIntoView(a.cursor)
@@ -1048,9 +1050,7 @@ func (a *App) goToRef(text string) {
 func (a *App) adoptWorkbook(wb *document.Workbook) {
 	a.wb = wb
 	a.sheet = wb.Sheets()[0]
-	a.cursor = position{Col: 1, Row: 1}
-	a.anchor = a.cursor
-	a.topRow, a.leftCol = 1, 1
+	a.resetActiveSheetPosition()
 	a.undoStack = undo.NewStack()
 	a.editor.stop()
 	a.editOrigin = editOrigin{}
@@ -1077,8 +1077,13 @@ func (a *App) addSheet() {
 		return
 	}
 	a.sheet = name
-	a.cursor, a.anchor = position{Col: 1, Row: 1}, position{Col: 1, Row: 1}
+	a.resetActiveSheetPosition()
+}
+
+func (a *App) resetActiveSheetPosition() {
 	a.topRow, a.leftCol = 1, 1
+	p := a.normalizeNavigablePosition(position{Col: 1, Row: 1}, 1, 1)
+	a.cursor, a.anchor = p, p
 }
 
 // selectionStats renders the status bar aggregates for multi-cell

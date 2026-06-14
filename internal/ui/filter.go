@@ -128,3 +128,20 @@ func (a *App) snapToVisibleRow(row, dir int) int {
 	}
 	return r
 }
+
+func (a *App) snapToVisibleCol(col, dir int) int {
+	c := col
+	for c >= 1 && c <= engine.MaxCols && !a.wb.ColVisible(a.sheet, c) {
+		c += dir
+	}
+	if c < 1 || c > engine.MaxCols {
+		c = col
+		for c >= 1 && c <= engine.MaxCols && !a.wb.ColVisible(a.sheet, c) {
+			c -= dir
+		}
+	}
+	if c < 1 || c > engine.MaxCols {
+		return a.cursor.Col
+	}
+	return c
+}

@@ -50,6 +50,7 @@ func Load(path string) (*Workbook, error) {
 // normalized (lowercase function names won't evaluate); that rewrite is
 // semantically neutral, so it doesn't mark the workbook dirty.
 func (w *Workbook) rebuildGraph() {
+	w.loadWorkbookSemantics()
 	w.loadNames()
 	w.loadTables()
 	sheets := w.Sheets()

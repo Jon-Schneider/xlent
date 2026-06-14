@@ -52,6 +52,14 @@ type Workbook struct {
 	// and structured-reference dependency tracking).
 	tables []TableInfo
 
+	// Workbook semantics that affect editing and navigation. They are rebuilt
+	// from the xlsx package whenever the underlying file changes wholesale.
+	merges     map[string][]engine.Ref
+	protected  map[string]bool
+	filters    map[string]AutoFilterInfo
+	hiddenRows map[string]map[int]bool
+	hiddenCols map[string]map[int]bool
+
 	// extents caches UsedRange per sheet; cleared by any edit to that sheet.
 	extents map[string][2]int
 
@@ -67,14 +75,19 @@ func New() *Workbook {
 
 func newWorkbook(f *excelize.File) *Workbook {
 	return &Workbook{
-		file:     f,
-		graph:    engine.NewGraph(),
-		values:   make(map[engine.Node]string),
-		cyclic:   make(map[engine.Node]bool),
-		opaque:   make(map[engine.Node]bool),
-		names:    make(map[string]engine.Ref),
-		extents:  make(map[string][2]int),
-		emphasis: make(map[int][3]bool),
+		file:       f,
+		graph:      engine.NewGraph(),
+		values:     make(map[engine.Node]string),
+		cyclic:     make(map[engine.Node]bool),
+		opaque:     make(map[engine.Node]bool),
+		names:      make(map[string]engine.Ref),
+		merges:     make(map[string][]engine.Ref),
+		protected:  make(map[string]bool),
+		filters:    make(map[string]AutoFilterInfo),
+		hiddenRows: make(map[string]map[int]bool),
+		hiddenCols: make(map[string]map[int]bool),
+		extents:    make(map[string][2]int),
+		emphasis:   make(map[int][3]bool),
 	}
 }
 

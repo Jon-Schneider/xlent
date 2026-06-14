@@ -48,6 +48,28 @@ func (r rect) String() string {
 	return engine.CellName(r.MinCol, r.MinRow) + ":" + engine.CellName(r.MaxCol, r.MaxRow)
 }
 
+// selectionRect expands the selected rectangle to include any merged cells it
+// touches, matching the visible selection users act on.
+func (a *App) selectionRect() rect {
+	sel := rectBetween(a.anchor, a.cursor)
+	for {
+		before := sel
+		ref := engine.Ref{
+			Sheet: a.sheet, MinCol: sel.MinCol, MinRow: sel.MinRow,
+			MaxCol: sel.MaxCol, MaxRow: sel.MaxRow,
+		}
+		for _, merged := range a.wb.MergedRangesOverlapping(a.sheet, ref) {
+			sel.MinCol = min(sel.MinCol, merged.MinCol)
+			sel.MinRow = min(sel.MinRow, merged.MinRow)
+			sel.MaxCol = max(sel.MaxCol, merged.MaxCol)
+			sel.MaxRow = max(sel.MaxRow, merged.MaxRow)
+		}
+		if sel == before {
+			return sel
+		}
+	}
+}
+
 // gridLayout captures where everything landed during the last render so
 // mouse events can be hit-tested against it.
 type gridLayout struct {
@@ -90,11 +112,30 @@ func (a *App) colWidth(col int) int {
 	return a.wb.ColWidth(a.sheet, col, defaultColWidth)
 }
 
+func (a *App) cellRenderWidth(layout gridLayout, p position) int {
+	width := a.colWidth(p.Col)
+	merged, ok := a.wb.MergedRangeAt(a.sheet, p.Col, p.Row)
+	if !ok || p.Col != merged.MinCol || p.Row != merged.MinRow {
+		return width
+	}
+	for _, col := range layout.cols {
+		if col > merged.MinCol && col <= merged.MaxCol {
+			width += a.colWidth(col)
+		}
+	}
+	return width
+}
+
 // computeLayout sizes the chrome and works out which columns and rows fit,
 // honoring frozen panes (a leading block of rows/columns pinned in place) and
 // hidden rows (from an active filter). It also keeps the scroll origins past
 // the frozen region — an invariant the rest of the UI relies on.
 func (a *App) computeLayout() gridLayout {
+	// Keep persisted filter markers current, but don't overwrite the pending
+	// range while the user is entering the first criterion for a new filter.
+	if !a.prompt.active() || a.prompt.kind != promptFilter {
+		a.syncFilterFromWorkbook()
+	}
 	width, height := max(a.width, 20), max(a.height, 7)
 
 	// Chrome: menu bar, formula bar, column header, sheet tabs, status bar.
@@ -159,10 +200,10 @@ func (a *App) computeLayout() gridLayout {
 	}
 }
 
-// rowHidden reports whether a row should be skipped when laying out the grid:
-// an active AutoFilter can hide data rows that fail its criteria.
+// rowHidden reports whether the workbook marks a row hidden, including rows
+// hidden by a persisted AutoFilter.
 func (a *App) rowHidden(row int) bool {
-	return a.filterHides(row)
+	return !a.wb.RowVisible(a.sheet, row)
 }
 
 // lastFullyVisibleCol reports the rightmost column that fits entirely on
@@ -184,7 +225,11 @@ func (a *App) lastFullyVisibleCol(layout gridLayout) int {
 
 func (a *App) renderGrid(layout gridLayout) string {
 	var b strings.Builder
-	sel := rectBetween(a.anchor, a.cursor)
+	sel := a.selectionRect()
+	visibleCols := make(map[int]bool, len(layout.cols))
+	for _, col := range layout.cols {
+		visibleCols[col] = true
+	}
 
 	// The pointed-reference highlight belongs to the sheet it was picked on;
 	// the cursor, selection, and in-cell editor belong to the sheet the edit
@@ -231,7 +276,12 @@ func (a *App) renderGrid(layout gridLayout) string {
 
 		for _, c := range layout.cols {
 			p := position{Col: c, Row: row}
-			w := a.colWidth(c)
+			w := a.cellRenderWidth(layout, p)
+			merged, inMerge := a.wb.MergedRangeAt(a.sheet, c, row)
+			mergeAnchor := position{Col: merged.MinCol, Row: merged.MinRow}
+			if inMerge && row == merged.MinRow && c > merged.MinCol && visibleCols[merged.MinCol] {
+				continue
+			}
 
 			// While editing, the active cell shows the raw editor text with
 			// the real terminal cursor (placed by placeCursor), so no
@@ -242,7 +292,10 @@ func (a *App) renderGrid(layout gridLayout) string {
 				continue
 			}
 
-			value := a.wb.DisplayValue(a.sheet, p.cellName())
+			value := ""
+			if !inMerge || p == mergeAnchor {
+				value = a.wb.DisplayValue(a.sheet, p.cellName())
+			}
 
 			style := styleCell
 			refTint, tinted := refTintAt(refSpans, a.sheet, p)
@@ -253,13 +306,17 @@ func (a *App) renderGrid(layout gridLayout) string {
 				style = refTint
 			case onEditSheet && p == a.cursor:
 				style = styleCursorCell
-			case onEditSheet && sel.contains(p):
+			case onEditSheet && (sel.contains(p) || inMerge && sel.contains(mergeAnchor)):
 				style = styleCellSelected
 			case isErrorValue(value):
 				style = styleErrorValue
 			}
 
-			if bold, italic, underline := a.wb.CellEmphasis(a.sheet, p.cellName()); bold || italic || underline {
+			styleCellName := p.cellName()
+			if inMerge {
+				styleCellName = mergeAnchor.cellName()
+			}
+			if bold, italic, underline := a.wb.CellEmphasis(a.sheet, styleCellName); bold || italic || underline {
 				style = style.Bold(bold).Italic(italic).Underline(underline)
 			}
 

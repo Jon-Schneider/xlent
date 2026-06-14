@@ -508,12 +508,29 @@ func (a *App) sortSelection(ascending bool) {
 	sel := rectBetween(a.anchor, a.cursor)
 	keyCol := a.cursor.Col
 	if sel.isSingleCell() {
-		maxCol, maxRow := a.wb.UsedRange(a.sheet)
-		if maxCol == 0 {
-			a.statusMsg = "Nothing to sort"
-			return
+		if table, ok := a.wb.TableAt(a.sheet, a.cursor.Col, a.cursor.Row); ok {
+			sel = rect{MinCol: table.MinCol, MinRow: table.MinRow + 1, MaxCol: table.MaxCol, MaxRow: table.MaxRow}
+		} else if filter, ok := a.wb.Filter(a.sheet); ok &&
+			a.cursor.Col >= filter.MinCol && a.cursor.Col <= filter.MaxCol &&
+			a.cursor.Row >= filter.MinRow && a.cursor.Row <= filter.MaxRow {
+			sel = rect{MinCol: filter.MinCol, MinRow: filter.MinRow + 1, MaxCol: filter.MaxCol, MaxRow: filter.MaxRow}
+		} else {
+			maxCol, maxRow := a.wb.UsedRange(a.sheet)
+			if maxCol == 0 {
+				a.statusMsg = "Nothing to sort"
+				return
+			}
+			sel = rect{MinCol: 1, MinRow: 1, MaxCol: maxCol, MaxRow: maxRow}
+			if a.likelyHeaderRow(sel) {
+				sel.MinRow++
+			}
 		}
-		sel = rect{MinCol: 1, MinRow: 1, MaxCol: maxCol, MaxRow: maxRow}
+	} else if a.selectionStartsWithKnownHeader(sel) || a.likelyHeaderRow(sel) {
+		sel.MinRow++
+	}
+	if sel.MinRow >= sel.MaxRow {
+		a.statusMsg = "Need at least two data rows to sort"
+		return
 	}
 	if keyCol < sel.MinCol || keyCol > sel.MaxCol {
 		keyCol = sel.MinCol
@@ -528,6 +545,39 @@ func (a *App) sortSelection(ascending bool) {
 	}) {
 		a.statusMsg = fmt.Sprintf("Sorted by column %s, %s", engine.ColumnName(keyCol), dir)
 	}
+}
+
+func (a *App) selectionStartsWithKnownHeader(sel rect) bool {
+	for _, table := range a.wb.Tables() {
+		if table.Sheet == a.sheet && sel.MinRow == table.MinRow &&
+			sel.MinCol >= table.MinCol && sel.MaxCol <= table.MaxCol && sel.MaxRow <= table.MaxRow {
+			return true
+		}
+	}
+	filter, ok := a.wb.Filter(a.sheet)
+	return ok && sel.MinRow == filter.MinRow &&
+		sel.MinCol >= filter.MinCol && sel.MaxCol <= filter.MaxCol && sel.MaxRow <= filter.MaxRow
+}
+
+// likelyHeaderRow is deliberately conservative: it only treats the first row
+// as a header when every heading is populated and a text heading sits above a
+// numeric data value.
+func (a *App) likelyHeaderRow(sel rect) bool {
+	if sel.MaxRow <= sel.MinRow {
+		return false
+	}
+	typedDifference := false
+	for col := sel.MinCol; col <= sel.MaxCol; col++ {
+		header := a.wb.DisplayValue(a.sheet, engine.CellName(col, sel.MinRow))
+		firstValue := a.wb.DisplayValue(a.sheet, engine.CellName(col, sel.MinRow+1))
+		if header == "" {
+			return false
+		}
+		if !isNumeric(header) && isNumeric(firstValue) {
+			typedDifference = true
+		}
+	}
+	return typedDifference
 }
 
 // fillDown copies the top cell of each selected column down over the rest of

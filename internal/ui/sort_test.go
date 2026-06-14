@@ -31,3 +31,26 @@ func TestSortSelectionByActiveColumnIsUndoable(t *testing.T) {
 		}
 	}
 }
+
+func TestSortSingleCellKeepsDetectedHeaderInPlace(t *testing.T) {
+	app, wb := setupTestApp(t)
+	sheet := app.sheet
+	for cell, value := range map[string]string{
+		"A1": "Name", "B1": "Qty",
+		"A2": "banana", "B2": "2",
+		"A3": "apple", "B3": "1",
+	} {
+		if err := wb.SetCell(sheet, cell, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app.setCursor(position{Col: 2, Row: 2}, false)
+	app.sortSelection(true)
+
+	if got := wb.DisplayValue(sheet, "A1"); got != "Name" {
+		t.Fatalf("header moved: A1 = %q", got)
+	}
+	if got := wb.DisplayValue(sheet, "A2"); got != "apple" {
+		t.Fatalf("first sorted data row = %q, want apple", got)
+	}
+}

@@ -42,6 +42,7 @@ const (
 	actBold
 	actItalic
 	actUnderline
+	actRecalc
 	actPrevSheet
 	actNextSheet
 	actAddSheet
@@ -109,6 +110,8 @@ func defaultMenus() []menu {
 			{label: "Underline", shortcut: "Ctrl+U", action: actUnderline},
 		}},
 		{title: "View", items: []menuItem{
+			{label: "Recalculate All", shortcut: "F9", action: actRecalc},
+			divider,
 			{label: "Previous Sheet", shortcut: "Ctrl+PgUp", action: actPrevSheet},
 			{label: "Next Sheet", shortcut: "Ctrl+PgDn", action: actNextSheet},
 			divider,

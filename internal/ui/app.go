@@ -576,6 +576,8 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.toggleFontStyle(document.FontItalic, "Italic")
 	case actUnderline:
 		a.toggleFontStyle(document.FontUnderline, "Underline")
+	case actRecalc:
+		a.recalculateAll()
 	case actPrevSheet:
 		a.switchSheet(-1)
 	case actNextSheet:
@@ -759,6 +761,9 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.findNext(a.lastSearch)
 	case "ctrl+g":
 		a.prompt.open(promptGoTo, "Go to: ", "")
+
+	case "f9":
+		a.recalculateAll()
 
 	// Excel disambiguates row vs column insert/delete by whole-row/column
 	// selection, which our selection model doesn't track; the shortcut does

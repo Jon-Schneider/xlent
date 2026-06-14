@@ -38,6 +38,12 @@ type Workbook struct {
 	values map[engine.Node]string // display-value cache, invalidated by edits
 	cyclic map[engine.Node]bool   // cells currently part of a reference cycle
 
+	// opaque holds formula cells whose effective inputs the dependency graph
+	// can't see (volatile functions like NOW/RAND, reference-constructing ones
+	// like INDIRECT/OFFSET). They are re-evaluated after every edit so their
+	// displayed value can't go stale.
+	opaque map[engine.Node]bool
+
 	// extents caches UsedRange per sheet; cleared by any edit to that sheet.
 	extents map[string][2]int
 
@@ -57,6 +63,7 @@ func newWorkbook(f *excelize.File) *Workbook {
 		graph:    engine.NewGraph(),
 		values:   make(map[engine.Node]string),
 		cyclic:   make(map[engine.Node]bool),
+		opaque:   make(map[engine.Node]bool),
 		extents:  make(map[string][2]int),
 		emphasis: make(map[int][3]bool),
 	}
@@ -110,6 +117,7 @@ func (w *Workbook) SetCell(sheet, cellName, input string) error {
 			return fmt.Errorf("clear %s!%s: %w", sheet, cell, err)
 		}
 		w.graph.Remove(node)
+		delete(w.opaque, node)
 
 	case strings.HasPrefix(input, "=") && len(input) > 1:
 		// Normalize on entry like Excel: =sum(a1:a2) is stored as
@@ -119,12 +127,18 @@ func (w *Workbook) SetCell(sheet, cellName, input string) error {
 			return fmt.Errorf("set formula %s!%s: %w", sheet, cell, err)
 		}
 		w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefs(sheet, formula)))
+		if engine.IsOpaqueFormula(formula) {
+			w.opaque[node] = true
+		} else {
+			delete(w.opaque, node)
+		}
 
 	case strings.HasPrefix(input, "'"):
 		if err := w.file.SetCellStr(sheet, cell, input[1:]); err != nil {
 			return fmt.Errorf("set %s!%s: %w", sheet, cell, err)
 		}
 		w.graph.Remove(node)
+		delete(w.opaque, node)
 
 	default:
 		if n, ok := parseNumber(input); ok {
@@ -135,12 +149,55 @@ func (w *Workbook) SetCell(sheet, cellName, input string) error {
 			return fmt.Errorf("set %s!%s: %w", sheet, cell, err)
 		}
 		w.graph.Remove(node)
+		delete(w.opaque, node)
 	}
 
 	w.invalidate(node)
+	w.invalidateOpaque(node)
 	w.dirty = true
 	delete(w.extents, sheet)
 	return nil
+}
+
+// invalidateOpaque drops cached values for every opaque formula cell (NOW,
+// INDIRECT, OFFSET, …) and its dependents after an edit, since the dependency
+// graph can't tell whether the edit affected their hidden inputs. The cell
+// just edited is skipped — invalidate already handled it.
+func (w *Workbook) invalidateOpaque(edited engine.Node) {
+	for n := range w.opaque {
+		if n == edited {
+			continue
+		}
+		w.invalidate(n)
+	}
+}
+
+// RecalculateAll forces a full recompute, the way Excel's F9 does. It busts
+// excelize's per-cell formula result cache (which SetCellStyle and time alone
+// never clear) by re-setting every formula verbatim, then drops every cached
+// display value so the next render re-evaluates from scratch. This is the
+// escape hatch for volatile formulas and any result the incremental graph
+// couldn't know to invalidate.
+func (w *Workbook) RecalculateAll() {
+	for _, sheet := range w.Sheets() {
+		rows, err := w.file.GetRows(sheet)
+		if err != nil {
+			continue
+		}
+		for r := range rows {
+			for c := range rows[r] {
+				cell := engine.CellName(c+1, r+1)
+				if formula, _ := w.file.GetCellFormula(sheet, cell); formula != "" {
+					_ = w.file.SetCellFormula(sheet, cell, formula)
+				}
+			}
+		}
+	}
+	w.values = make(map[engine.Node]string)
+	w.cyclic = make(map[engine.Node]bool)
+	for n := range w.graph.FindCycles() {
+		w.cyclic[n] = true
+	}
 }
 
 // invalidate drops cached values for node and everything downstream of it,

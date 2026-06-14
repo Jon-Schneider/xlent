@@ -105,8 +105,8 @@ func TestMenuItemClickExecutes(t *testing.T) {
 	app, _ := setupTestApp(t)
 	app.View()
 
-	// Open View menu and click "New Sheet" (line 3: Prev, Next, divider, New).
-	// The menu is located by title so adding menus doesn't shift this test.
+	// Open the View menu and click "New Sheet". The menu and item are both
+	// located by name so adding or reordering menu entries doesn't shift this.
 	viewIdx := -1
 	for i, m := range app.menus {
 		if m.title == "View" {
@@ -120,7 +120,25 @@ func TestMenuItemClickExecutes(t *testing.T) {
 	x := app.menuBar.titleX[viewIdx][0]
 	app.Update(tea.MouseClickMsg{X: x, Y: 0, Button: tea.MouseLeft})
 	app.View()
-	app.Update(tea.MouseClickMsg{X: app.menuBar.dropX + 1, Y: 1 + 3, Button: tea.MouseLeft})
+
+	newSheetItem := -1
+	for i, it := range app.menus[viewIdx].items {
+		if it.label == "New Sheet" {
+			newSheetItem = i
+			break
+		}
+	}
+	if newSheetItem < 0 {
+		t.Fatal("no New Sheet item in the View menu")
+	}
+	line := -1
+	for ln, idx := range app.menuBar.dropLines {
+		if idx == newSheetItem {
+			line = ln
+			break
+		}
+	}
+	app.Update(tea.MouseClickMsg{X: app.menuBar.dropX + 1, Y: 1 + line, Button: tea.MouseLeft})
 
 	if len(app.wb.Sheets()) != 2 {
 		t.Fatalf("sheets = %v, want a second sheet added", app.wb.Sheets())

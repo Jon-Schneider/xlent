@@ -315,6 +315,14 @@ func (a *App) toggleFontStyle(attr document.FontStyle, label string) {
 	}
 }
 
+// recalculateAll forces a full workbook recompute (Excel's F9), refreshing
+// volatile formulas and any value the incremental graph couldn't know to
+// invalidate. It does not change content, so it isn't undoable.
+func (a *App) recalculateAll() {
+	a.wb.RecalculateAll()
+	a.statusMsg = "Recalculated"
+}
+
 func (a *App) undo() {
 	label := a.undoStack.UndoLabel()
 	if label == "" {

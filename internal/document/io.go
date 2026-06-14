@@ -70,6 +70,9 @@ func (w *Workbook) rebuildGraph() {
 				}
 				node := engine.Node{Sheet: sheet, Col: c + 1, Row: r + 1}
 				w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefs(sheet, formula)))
+				if engine.IsOpaqueFormula(formula) {
+					w.opaque[node] = true
+				}
 			}
 		}
 	}

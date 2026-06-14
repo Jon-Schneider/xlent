@@ -136,6 +136,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseClickMsg:
+		if a.attributions.open {
+			a.handleAttributionsMouse(tea.Mouse(msg))
+			return a, nil
+		}
 		if handled, model, cmd := a.handleMenuClick(tea.Mouse(msg)); handled {
 			return model, cmd
 		}
@@ -178,6 +182,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.colResize = colResize{}
 
 	case tea.MouseWheelMsg:
+		if a.attributions.open {
+			a.scrollAttributionsWheel(tea.Mouse(msg))
+			return a, nil
+		}
 		a.handleWheel(tea.Mouse(msg))
 	}
 	return a, nil

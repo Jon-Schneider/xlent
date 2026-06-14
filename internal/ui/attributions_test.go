@@ -8,7 +8,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-func TestAttributionsMenuOpensPanel(t *testing.T) {
+func TestAttributionsMenuOpensList(t *testing.T) {
 	app, _ := setupTestApp(t)
 
 	app.execMenuAction(actAttributions)
@@ -17,66 +17,107 @@ func TestAttributionsMenuOpensPanel(t *testing.T) {
 	}
 
 	content := ansi.Strip(app.View().Content)
-	for _, want := range []string{"Third-Party Attributions", "bubbletea", "MIT", "Esc to close"} {
+	for _, want := range []string{"Third-Party Attributions", "bubbletea", "MIT", "Esc close"} {
 		if !strings.Contains(content, want) {
-			t.Errorf("attributions panel missing %q", want)
+			t.Errorf("attributions list missing %q", want)
 		}
-	}
-
-	// Scrolling to the end reveals the last group (the golang.org/x modules).
-	for range len(thirdPartyAttributions) * 4 {
-		press(t, app, tea.Key{Code: tea.KeyDown})
-	}
-	if scrolled := ansi.Strip(app.View().Content); !strings.Contains(scrolled, "golang.org/x") {
-		t.Error("scrolled attributions panel missing trailing golang.org/x entries")
-	}
-
-	// excelize must be credited somewhere in the underlying list.
-	if !attributionsListContains("excelize") {
-		t.Error("attributions list missing excelize")
 	}
 }
 
-func attributionsListContains(needle string) bool {
-	for _, a := range thirdPartyAttributions {
-		if strings.Contains(a.module, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-func TestAttributionsEscCloses(t *testing.T) {
+func TestAttributionsEscClosesList(t *testing.T) {
 	app, _ := setupTestApp(t)
 
 	app.attributions.openPanel()
 	press(t, app, tea.Key{Code: tea.KeyEscape})
 
 	if app.attributions.open {
-		t.Error("Esc must close the attributions panel")
+		t.Error("Esc must close the attributions list")
 	}
 }
 
-func TestAttributionsScrollClampsWithinContent(t *testing.T) {
+func TestAttributionsSelectionClampsToBounds(t *testing.T) {
 	app, _ := setupTestApp(t)
 	app.attributions.openPanel()
 
-	// Scrolling up at the top stays at zero.
 	press(t, app, tea.Key{Code: tea.KeyUp})
-	if app.attributions.scroll != 0 {
-		t.Errorf("scroll = %d, want 0 at top", app.attributions.scroll)
+	if app.attributions.selected != 0 {
+		t.Errorf("selected = %d, want 0 at top", app.attributions.selected)
 	}
 
-	// Scrolling far down never exceeds the last reachable offset.
-	for range len(thirdPartyAttributions) * 4 {
+	for range len(thirdPartyAttributions) * 2 {
 		press(t, app, tea.Key{Code: tea.KeyDown})
 	}
-	maxScroll := len(attributionLines()) - app.attributionsViewportHeight()
-	if maxScroll < 0 {
-		maxScroll = 0
+	last := len(thirdPartyAttributions) - 1
+	if app.attributions.selected != last {
+		t.Errorf("selected = %d, want clamped to %d", app.attributions.selected, last)
 	}
-	if app.attributions.scroll != maxScroll {
-		t.Errorf("scroll = %d, want clamped to %d", app.attributions.scroll, maxScroll)
+}
+
+func TestAttributionsEnterShowsFullLicense(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.attributions.openPanel()
+
+	// Entry 0 is bubbletea (MIT).
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+	if !app.attributions.detail {
+		t.Fatal("Enter must open the license detail view")
+	}
+
+	content := ansi.Strip(app.View().Content)
+	for _, want := range []string{"bubbletea", "MIT License", "Permission is hereby granted"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("license detail missing %q", want)
+		}
+	}
+}
+
+func TestAttributionsDetailShowsMatchingLicenseText(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.attributions.openPanel()
+
+	// Select a BSD-3-Clause module (excelize) and open it.
+	app.attributions.selected = indexOfModule(t, "github.com/xuri/excelize/v2")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	content := ansi.Strip(app.View().Content)
+	if !strings.Contains(content, "BSD 3-Clause License") {
+		t.Error("BSD entry must show the BSD 3-Clause license text")
+	}
+	if !strings.Contains(content, "excelize Authors") {
+		t.Error("license text must include the module's copyright line")
+	}
+}
+
+func TestAttributionsDetailEscReturnsToList(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.attributions.openPanel()
+
+	press(t, app, tea.Key{Code: tea.KeyEnter}) // into detail
+	press(t, app, tea.Key{Code: tea.KeyEscape})
+
+	if !app.attributions.open {
+		t.Error("Esc in detail must keep the panel open")
+	}
+	if app.attributions.detail {
+		t.Error("Esc in detail must return to the list")
+	}
+}
+
+func TestAttributionsClickOpensLicense(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.attributions.openPanel()
+	app.View() // populate row geometry
+
+	// Click the second visible module row.
+	y := app.attributions.rowY0 + 1
+	x := app.attributions.boxX + 2
+	app.Update(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+
+	if !app.attributions.detail {
+		t.Fatal("clicking a module row must open its license")
+	}
+	if app.attributions.selected != app.attributions.listTop+1 {
+		t.Errorf("selected = %d, want second visible row", app.attributions.selected)
 	}
 }
 
@@ -90,4 +131,27 @@ func TestAttributionsKeysDoNotLeakToGrid(t *testing.T) {
 	if app.cursor != start {
 		t.Errorf("cursor moved to %+v while panel open; keys must be captured", app.cursor)
 	}
+}
+
+func TestEveryAttributionHasEmbeddedLicense(t *testing.T) {
+	for _, entry := range thirdPartyAttributions {
+		text := entry.licenseText()
+		if strings.Contains(text, "{{COPYRIGHT}}") {
+			t.Errorf("%s: copyright placeholder not substituted", entry.module)
+		}
+		if !strings.Contains(text, entry.copyright) {
+			t.Errorf("%s: license text missing copyright line", entry.module)
+		}
+	}
+}
+
+func indexOfModule(t *testing.T, module string) int {
+	t.Helper()
+	for i, entry := range thirdPartyAttributions {
+		if entry.module == module {
+			return i
+		}
+	}
+	t.Fatalf("module %q not found in attributions", module)
+	return -1
 }

@@ -444,6 +444,9 @@ func (w *Workbook) ColWidth(sheet string, col, fallback int) int {
 // cells-1, the inverse of ColWidth's int(width+1) mapping, so a width
 // round-trips exactly through save and load.
 func (w *Workbook) SetColWidth(sheet string, col, cells int) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
 	cells = min(max(cells, 4), 40)
 	name := engine.ColumnName(col)
 	if err := w.file.SetColWidth(sheet, name, name, float64(cells-1)); err != nil {

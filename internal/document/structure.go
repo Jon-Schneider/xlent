@@ -64,6 +64,9 @@ func (w *Workbook) resetDerivedState() {
 // content and rewrites formulas (including on other sheets) itself, so no
 // additional reference adjustment happens here — only a graph rebuild.
 func (w *Workbook) InsertRows(sheet string, row, count int) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
 	if err := w.file.InsertRows(sheet, row, count); err != nil {
 		return fmt.Errorf("insert %d row(s) at %d: %w", count, row, err)
 	}
@@ -73,6 +76,9 @@ func (w *Workbook) InsertRows(sheet string, row, count int) error {
 
 // InsertCols inserts count blank columns to the left of col (1-based).
 func (w *Workbook) InsertCols(sheet string, col, count int) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
 	if err := w.file.InsertCols(sheet, engine.ColumnName(col), count); err != nil {
 		return fmt.Errorf("insert %d column(s) at %s: %w", count, engine.ColumnName(col), err)
 	}
@@ -82,6 +88,9 @@ func (w *Workbook) InsertCols(sheet string, col, count int) error {
 
 // RemoveRows deletes count rows starting at row.
 func (w *Workbook) RemoveRows(sheet string, row, count int) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
 	for i := 0; i < count; i++ {
 		// Removing the same index repeatedly eats successive rows.
 		if err := w.file.RemoveRow(sheet, row); err != nil {
@@ -95,6 +104,9 @@ func (w *Workbook) RemoveRows(sheet string, row, count int) error {
 
 // RemoveCols deletes count columns starting at col (1-based).
 func (w *Workbook) RemoveCols(sheet string, col, count int) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
 	for i := 0; i < count; i++ {
 		if err := w.file.RemoveCol(sheet, engine.ColumnName(col)); err != nil {
 			w.resetDerivedState()

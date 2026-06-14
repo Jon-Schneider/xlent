@@ -64,6 +64,10 @@ func (a *App) cancelEdit() {
 // clearSelection blanks every cell in the selection as one undoable command.
 func (a *App) clearSelection() {
 	sel := rectBetween(a.anchor, a.cursor)
+	if err := a.wb.CheckRangeEditable(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
 	var edits []undo.CellEdit
 	for row := sel.MinRow; row <= sel.MaxRow; row++ {
 		for col := sel.MinCol; col <= sel.MaxCol; col++ {
@@ -239,6 +243,12 @@ func (a *App) pasteSpecial(mode pasteMode) {
 // dropping formulas. Thousands separators are stripped so formatted numbers
 // stay numeric on re-entry.
 func (a *App) pasteValues(block clipboard.Block) {
+	maxCol := min(a.cursor.Col+block.Cols()-1, engine.MaxCols)
+	maxRow := min(a.cursor.Row+block.Rows()-1, engine.MaxRows)
+	if err := a.wb.CheckRangeEditable(a.sheet, a.cursor.Col, a.cursor.Row, maxCol, maxRow); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
 	var edits []undo.CellEdit
 	for r, row := range block.Display {
 		for c, val := range row {
@@ -259,6 +269,12 @@ func (a *App) pasteValues(block clipboard.Block) {
 func (a *App) pasteTranspose(block clipboard.Block) {
 	sCol, sRow, err := engine.ParseCellName(block.SourceCell)
 	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	maxCol := min(a.cursor.Col+block.Rows()-1, engine.MaxCols)
+	maxRow := min(a.cursor.Row+block.Cols()-1, engine.MaxRows)
+	if err := a.wb.CheckRangeEditable(a.sheet, a.cursor.Col, a.cursor.Row, maxCol, maxRow); err != nil {
 		a.statusMsg = err.Error()
 		return
 	}
@@ -339,6 +355,16 @@ func valueForPaste(display string) string {
 func (a *App) pasteExternal(text string) {
 	rows := clipboard.DecodeTSV(text)
 	if len(rows) == 0 {
+		return
+	}
+	maxCols := 0
+	for _, row := range rows {
+		maxCols = max(maxCols, len(row))
+	}
+	maxCol := min(a.cursor.Col+maxCols-1, engine.MaxCols)
+	maxRow := min(a.cursor.Row+len(rows)-1, engine.MaxRows)
+	if err := a.wb.CheckRangeEditable(a.sheet, a.cursor.Col, a.cursor.Row, maxCol, maxRow); err != nil {
+		a.statusMsg = err.Error()
 		return
 	}
 
@@ -512,6 +538,10 @@ func (a *App) fillDown() {
 	if sel.MinRow == sel.MaxRow {
 		return
 	}
+	if err := a.wb.CheckRangeEditable(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
 	var edits []undo.CellEdit
 	for col := sel.MinCol; col <= sel.MaxCol; col++ {
 		src := a.wb.RawContent(a.sheet, engine.CellName(col, sel.MinRow))
@@ -528,6 +558,10 @@ func (a *App) fillDown() {
 func (a *App) fillRight() {
 	sel := rectBetween(a.anchor, a.cursor)
 	if sel.MinCol == sel.MaxCol {
+		return
+	}
+	if err := a.wb.CheckRangeEditable(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow); err != nil {
+		a.statusMsg = err.Error()
 		return
 	}
 	var edits []undo.CellEdit
@@ -956,6 +990,12 @@ func (a *App) replaceAll(find, repl string) {
 		return
 	}
 	maxCol, maxRow := a.wb.UsedRange(a.sheet)
+	if maxCol > 0 {
+		if err := a.wb.CheckRangeEditable(a.sheet, 1, 1, maxCol, maxRow); err != nil {
+			a.statusMsg = err.Error()
+			return
+		}
+	}
 	var edits []undo.CellEdit
 	occurrences := 0
 	for row := 1; row <= maxRow; row++ {

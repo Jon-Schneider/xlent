@@ -71,6 +71,9 @@ func (w *Workbook) engineTables() []engine.Table {
 // header) with a default banded style. The header cells must be non-empty and
 // unique, as Excel requires.
 func (w *Workbook) AddTable(sheet, rangeRef, name string) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
 	show := true
 	tbl := &excelize.Table{
 		Range:          rangeRef,
@@ -89,6 +92,14 @@ func (w *Workbook) AddTable(sheet, rangeRef, name string) error {
 
 // RemoveTable deletes the named table, leaving its cell content in place.
 func (w *Workbook) RemoveTable(name string) error {
+	for _, table := range w.tables {
+		if table.Name == name {
+			if err := w.ensureSheetEditable(table.Sheet); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	if err := w.file.DeleteTable(name); err != nil {
 		return fmt.Errorf("remove table %q: %w", name, err)
 	}
@@ -102,6 +113,9 @@ func (w *Workbook) RemoveTable(name string) error {
 // route such an edit through a snapshot command so the edit and the resize
 // undo together.
 func (w *Workbook) WouldExpandTable(sheet string, col, row int) bool {
+	if w.SheetProtected(sheet) {
+		return false
+	}
 	for _, t := range w.tables {
 		if t.Sheet == sheet && row == t.MaxRow+1 && col >= t.MinCol && col <= t.MaxCol {
 			return true
@@ -125,6 +139,9 @@ func (w *Workbook) TableAt(sheet string, col, row int) (TableInfo, bool) {
 // expansion). It reports whether a table was expanded. excelize has no resize,
 // so the table is dropped and recreated over the larger range.
 func (w *Workbook) ExpandTableForEdit(sheet string, col, row int) bool {
+	if w.SheetProtected(sheet) {
+		return false
+	}
 	for _, t := range w.tables {
 		if t.Sheet != sheet || row != t.MaxRow+1 || col < t.MinCol || col > t.MaxCol {
 			continue

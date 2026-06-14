@@ -19,6 +19,9 @@ func (w *Workbook) RenameSheet(oldName, newName string) error {
 	if newName == oldName {
 		return nil
 	}
+	if err := w.ensureSheetEditable(oldName); err != nil {
+		return err
+	}
 	for _, s := range w.Sheets() {
 		// A case-only rename of the same sheet is allowed; any other sheet
 		// matching the new name (sheet names are case-insensitive) is not.
@@ -59,6 +62,9 @@ func (w *Workbook) RenameSheet(oldName, newName string) error {
 func (w *Workbook) DeleteSheet(name string) error {
 	if len(w.Sheets()) <= 1 {
 		return ErrLastSheet
+	}
+	if err := w.ensureSheetEditable(name); err != nil {
+		return err
 	}
 	if err := w.file.DeleteSheet(name); err != nil {
 		return fmt.Errorf("delete sheet %q: %w", name, err)

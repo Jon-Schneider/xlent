@@ -43,6 +43,9 @@ const (
 // Excel does: if every cell already has it, it's cleared everywhere;
 // otherwise it's set everywhere.
 func (w *Workbook) ToggleFontStyle(sheet string, minCol, minRow, maxCol, maxRow int, attr FontStyle) error {
+	if err := w.ensureRangeEditable(sheet, minCol, minRow, maxCol, maxRow); err != nil {
+		return err
+	}
 	allHave := true
 scan:
 	for row := minRow; row <= maxRow; row++ {
@@ -135,8 +138,12 @@ func (w *Workbook) CellStyleAt(sheet, cellName string) CellStyle {
 // the cell's content. Like SetNumberFormat, it busts excelize's per-cell calc
 // cache for formula cells and drops the cached display value.
 func (w *Workbook) ApplyCellStyle(sheet, cellName string, s CellStyle) error {
+	cellName = w.MergedAnchor(sheet, cellName)
 	node, cell, err := w.node(sheet, cellName)
 	if err != nil {
+		return err
+	}
+	if err := w.ensureCellEditable(sheet, cell); err != nil {
 		return err
 	}
 	style := &excelize.Style{NumFmt: s.NumFmtID, Font: &excelize.Font{Bold: s.Bold, Italic: s.Italic}}
@@ -188,6 +195,9 @@ func (w *Workbook) CellEmphasis(sheet, cellName string) (bold, italic, underline
 // display values for the affected cells are invalidated — the stored values
 // don't change, only how they render.
 func (w *Workbook) SetNumberFormat(sheet string, minCol, minRow, maxCol, maxRow int, f NumberFormat) error {
+	if err := w.ensureRangeEditable(sheet, minCol, minRow, maxCol, maxRow); err != nil {
+		return err
+	}
 	// Distinct source styles map to distinct rewritten styles; cells sharing
 	// a style share the result, so a big uniform range costs one NewStyle.
 	rewritten := make(map[int]int)

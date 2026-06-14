@@ -20,7 +20,21 @@ Excel keyboard shortcuts and the mouse — no vim grammar, no editing modes to l
   round-trip, not editable).
 - A cell-formatting UI (fonts, colors, borders). Existing formats are *displayed*
   where feasible and always *preserved*; creating new ones comes later.
-- Array formulas / dynamic arrays.
+- **Array formulas / dynamic arrays (spilled formulas).** This is a hard
+  backend limitation, not just a scope choice: excelize's `CalcCellValue`
+  implements none of the dynamic-array functions (`FILTER`, `SORT`, `UNIQUE`,
+  `SEQUENCE`, `XLOOKUP`, …) and does not evaluate array constants (`{1,2;3,4}`)
+  or CSE array formulas. Building a spill engine on top would be large and
+  unreliable, so xlent does not attempt it. Instead it **detects** these
+  constructs and **flags** them in the status bar (`⚠ FILTER (dynamic arrays
+  unsupported)`), and preserves them on round-trip, so a displayed value is
+  never silently trusted. See `engine/unsupported.go`.
+- **Structured-reference evaluation.** xlent can create and manage Excel
+  *tables* (which round-trip and auto-expand), and it resolves structured
+  references (`Table[Column]`, `[@Col]`) for *dependency tracking*. But
+  excelize does not evaluate structured references in formulas, so such
+  formulas are flagged as unsupported too rather than shown with a stale or
+  error value.
 - Collaboration, scripting, plugins.
 
 ## 2. Technology

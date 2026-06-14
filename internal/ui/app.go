@@ -56,6 +56,11 @@ type App struct {
 	// Replace while the second step (the replacement) is being entered.
 	replaceFind string
 
+	// filter is the active AutoFilter view (if any); filterCol is the column
+	// the open filter prompt is editing.
+	filter    filterState
+	filterCol int
+
 	// colResize tracks an in-progress column-width drag started on a column
 	// edge in the header row.
 	colResize colResize
@@ -598,6 +603,10 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.fillRight()
 	case actFillSeries:
 		a.fillSeries()
+	case actFilter:
+		a.openFilter()
+	case actClearFilter:
+		a.clearFilter()
 	case actFreeze:
 		a.freezePanes()
 	case actUnfreeze:
@@ -785,6 +794,8 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.fillDown()
 	case "ctrl+r":
 		a.fillRight()
+	case "ctrl+shift+l":
+		a.openFilter()
 
 	case "ctrl+f":
 		a.prompt.open(promptFind, "Find: ", a.lastSearch)
@@ -820,9 +831,19 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // moveCursor shifts the cursor by a delta, clamping to sheet bounds. When
 // extend is false the anchor follows the cursor (selection collapses).
 func (a *App) moveCursor(dCol, dRow int, extend bool) {
+	row := clamp(a.cursor.Row+dRow, 1, engine.MaxRows)
+	// With an active filter, vertical movement skips hidden rows so the cursor
+	// never lands on one that isn't drawn.
+	if dRow != 0 && a.rowHidden(row) {
+		dir := 1
+		if dRow < 0 {
+			dir = -1
+		}
+		row = a.snapToVisibleRow(row, dir)
+	}
 	a.setCursor(position{
 		Col: clamp(a.cursor.Col+dCol, 1, engine.MaxCols),
-		Row: clamp(a.cursor.Row+dRow, 1, engine.MaxRows),
+		Row: row,
 	}, extend)
 }
 

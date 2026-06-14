@@ -51,6 +51,8 @@ const (
 	actFillDown
 	actFillRight
 	actFillSeries
+	actFilter
+	actClearFilter
 	actFreeze
 	actUnfreeze
 	actRecalc
@@ -127,6 +129,9 @@ func defaultMenus() []menu {
 		{title: "Data", items: []menuItem{
 			{label: "Sort Ascending", action: actSortAsc},
 			{label: "Sort Descending", action: actSortDesc},
+			divider,
+			{label: "Filter…", shortcut: "Ctrl+Shift+L", action: actFilter},
+			{label: "Clear Filter", action: actClearFilter},
 			divider,
 			{label: "Fill Down", shortcut: "Ctrl+D", action: actFillDown},
 			{label: "Fill Right", shortcut: "Ctrl+R", action: actFillRight},

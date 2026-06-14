@@ -159,10 +159,10 @@ func (a *App) computeLayout() gridLayout {
 	}
 }
 
-// rowHidden reports whether a row should be skipped when laying out the grid.
-// Freeze panes never hides rows; an active filter (added separately) does.
+// rowHidden reports whether a row should be skipped when laying out the grid:
+// an active AutoFilter can hide data rows that fail its criteria.
 func (a *App) rowHidden(row int) bool {
-	return false
+	return a.filterHides(row)
 }
 
 // lastFullyVisibleCol reports the rightmost column that fits entirely on
@@ -202,9 +202,18 @@ func (a *App) renderGrid(layout gridLayout) string {
 	refSpans := a.formulaRefSpans()
 
 	// Column header.
+	filtering := a.filter.active && a.filter.sheet == a.sheet
 	b.WriteString(styleHeader.Render(strings.Repeat(" ", layout.gutterW)))
 	for _, c := range layout.cols {
 		name := engine.ColumnName(c)
+		// A filter marks its columns: ▾ when a criterion is set, ▿ otherwise.
+		if filtering && c >= a.filter.minCol && c <= a.filter.maxCol {
+			if a.filter.criteria[c] != "" {
+				name += "▾"
+			} else {
+				name += "▿"
+			}
+		}
 		style := styleHeader
 		if c >= sel.MinCol && c <= sel.MaxCol {
 			style = styleHeaderActive

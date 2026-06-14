@@ -742,6 +742,9 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 		a.replaceAll(a.replaceFind, raw)
 		a.replaceFind = ""
 
+	case promptFilter:
+		a.applyFilterCriterion(a.filterCol, text)
+
 	case promptGoTo:
 		a.goToRef(text)
 

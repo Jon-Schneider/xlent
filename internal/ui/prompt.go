@@ -12,6 +12,7 @@ const (
 	promptReplaceFind // "Replace:" — capture the search term, then ask With
 	promptReplaceWith // "With:" — capture the replacement and run replace-all
 	promptGoTo
+	promptFilter
 	promptRenameSheet
 	promptConfirmDirty // "Save changes before <pending>? (y/n)"
 )

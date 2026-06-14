@@ -123,9 +123,22 @@ func (w *Workbook) Close() error { return w.file.Close() }
 //
 // All dependent formula cells are invalidated; cycle state is updated.
 func (w *Workbook) SetCell(sheet, cellName, input string) error {
+	return w.setCell(sheet, cellName, input, true)
+}
+
+func (w *Workbook) setCell(sheet, cellName, input string, enforceValidation bool) error {
+	cellName = w.MergedAnchor(sheet, cellName)
 	node, cell, err := w.node(sheet, cellName)
 	if err != nil {
 		return err
+	}
+	if err := w.ensureCellEditable(sheet, cell); err != nil {
+		return err
+	}
+	if enforceValidation {
+		if err := w.validateCellInput(sheet, cell, input); err != nil {
+			return err
+		}
 	}
 
 	switch {

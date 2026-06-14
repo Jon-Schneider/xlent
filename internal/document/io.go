@@ -132,7 +132,10 @@ func (w *Workbook) Save() error {
 // success the workbook adopts path as its home and is no longer dirty.
 func (w *Workbook) SaveAs(path string) error {
 	switch ext := strings.ToLower(filepath.Ext(path)); ext {
-	case ".xlsx":
+	// excelize writes the format from the extension and preserves a VBA
+	// project, so macro-enabled and template workbooks opened for editing can
+	// be saved back in place instead of erroring on Ctrl+S.
+	case ".xlsx", ".xlsm", ".xltm", ".xltx":
 		if err := w.file.SaveAs(path); err != nil {
 			return fmt.Errorf("save %s: %w", path, err)
 		}
@@ -145,7 +148,7 @@ func (w *Workbook) SaveAs(path string) error {
 		w.isCSV = true
 
 	default:
-		return fmt.Errorf("unsupported file type %q (expected .xlsx or .csv)", ext)
+		return fmt.Errorf("unsupported file type %q (expected .xlsx, .xlsm, .xltm, .xltx, or .csv)", ext)
 	}
 
 	w.path = path

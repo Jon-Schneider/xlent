@@ -42,6 +42,8 @@ const (
 	actBold
 	actItalic
 	actUnderline
+	actSortAsc
+	actSortDesc
 	actRecalc
 	actPrevSheet
 	actNextSheet
@@ -108,6 +110,10 @@ func defaultMenus() []menu {
 			{label: "Bold", shortcut: "Ctrl+B", action: actBold},
 			{label: "Italic", shortcut: "Ctrl+I", action: actItalic},
 			{label: "Underline", shortcut: "Ctrl+U", action: actUnderline},
+		}},
+		{title: "Data", items: []menuItem{
+			{label: "Sort Ascending", action: actSortAsc},
+			{label: "Sort Descending", action: actSortDesc},
 		}},
 		{title: "View", items: []menuItem{
 			{label: "Recalculate All", shortcut: "F9", action: actRecalc},

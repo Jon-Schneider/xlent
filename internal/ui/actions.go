@@ -330,6 +330,35 @@ func (a *App) toggleFontStyle(attr document.FontStyle, label string) {
 	}
 }
 
+// sortSelection sorts the selected rows by the active column. A single-cell
+// selection expands to the whole used range first, so sorting "just works"
+// from anywhere inside a data block. Sorting is snapshot-undoable.
+func (a *App) sortSelection(ascending bool) {
+	sel := rectBetween(a.anchor, a.cursor)
+	keyCol := a.cursor.Col
+	if sel.isSingleCell() {
+		maxCol, maxRow := a.wb.UsedRange(a.sheet)
+		if maxCol == 0 {
+			a.statusMsg = "Nothing to sort"
+			return
+		}
+		sel = rect{MinCol: 1, MinRow: 1, MaxCol: maxCol, MaxRow: maxRow}
+	}
+	if keyCol < sel.MinCol || keyCol > sel.MaxCol {
+		keyCol = sel.MinCol
+	}
+
+	dir := "ascending"
+	if !ascending {
+		dir = "descending"
+	}
+	if a.structuralOp("Sort", func() error {
+		return a.wb.SortRange(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow, keyCol, ascending)
+	}) {
+		a.statusMsg = fmt.Sprintf("Sorted by column %s, %s", engine.ColumnName(keyCol), dir)
+	}
+}
+
 // recalculateAll forces a full workbook recompute (Excel's F9), refreshing
 // volatile formulas and any value the incremental graph couldn't know to
 // invalidate. It does not change content, so it isn't undoable.

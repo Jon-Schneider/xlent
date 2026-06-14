@@ -576,6 +576,10 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.toggleFontStyle(document.FontItalic, "Italic")
 	case actUnderline:
 		a.toggleFontStyle(document.FontUnderline, "Underline")
+	case actSortAsc:
+		a.sortSelection(true)
+	case actSortDesc:
+		a.sortSelection(false)
 	case actRecalc:
 		a.recalculateAll()
 	case actPrevSheet:

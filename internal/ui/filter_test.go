@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"path/filepath"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -36,6 +37,7 @@ func TestFilterHidesNonMatchingRows(t *testing.T) {
 	if app.prompt.kind != promptFilter {
 		t.Fatal("openFilter must open the filter prompt")
 	}
+	app.View() // rendering must not discard a new filter before it is applied
 	typeText(t, app, "ap")
 	press(t, app, tea.Key{Code: tea.KeyEnter})
 
@@ -56,6 +58,34 @@ func TestFilterHidesNonMatchingRows(t *testing.T) {
 		if r == 3 || r == 5 {
 			t.Errorf("hidden row %d appeared in rowsList %v", r, layout.rowsList)
 		}
+	}
+}
+
+func TestComparisonFilterPersistsAcrossReload(t *testing.T) {
+	app, _ := filterFixture(t)
+	app.setCursor(position{Col: 2, Row: 2}, false)
+	app.openFilter()
+	typeText(t, app, ">= 3")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	path := filepath.Join(t.TempDir(), "filter.xlsx")
+	if err := app.wb.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := NewApp(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reloaded.wb.Close() })
+	reloaded.width, reloaded.height = 80, 24
+	reloaded.computeLayout()
+
+	if !reloaded.rowHidden(2) || !reloaded.rowHidden(3) || reloaded.rowHidden(4) || reloaded.rowHidden(5) {
+		t.Fatalf("comparison filter visibility wrong: rows 2..5 hidden = %v %v %v %v",
+			reloaded.rowHidden(2), reloaded.rowHidden(3), reloaded.rowHidden(4), reloaded.rowHidden(5))
+	}
+	if got := reloaded.filter.criteria[2]; got != "x >= 3" {
+		t.Fatalf("persisted criterion = %q, want x >= 3", got)
 	}
 }
 

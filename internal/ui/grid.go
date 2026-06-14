@@ -175,11 +175,17 @@ func (a *App) computeLayout() gridLayout {
 	var cols, colX []int
 	x := gutterW
 	for c := 1; c <= frozenCols && x < width; c++ {
+		if !a.wb.ColVisible(a.sheet, c) {
+			continue
+		}
 		cols = append(cols, c)
 		colX = append(colX, x)
 		x += a.colWidth(c)
 	}
 	for c := a.leftCol; x < width && c <= engine.MaxCols; c++ {
+		if !a.wb.ColVisible(a.sheet, c) {
+			continue
+		}
 		cols = append(cols, c)
 		colX = append(colX, x)
 		x += a.colWidth(c)

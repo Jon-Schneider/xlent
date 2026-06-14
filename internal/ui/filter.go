@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Jon-Schneider/xlent/internal/document"
 	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
-// filterState is a session AutoFilter over one sheet: a header row plus a data
-// range, and a case-insensitive "contains" criterion per column. Rows in the
-// data range that fail any active criterion are hidden from the grid. The
-// filter is a view, not a document mutation, so it isn't saved or undone.
+// filterState mirrors the active sheet's persisted worksheet AutoFilter.
 type filterState struct {
 	active    bool
 	sheet     string
@@ -19,71 +17,77 @@ type filterState struct {
 	maxRow    int
 	minCol    int
 	maxCol    int
-	criteria  map[int]string // column → substring criterion
+	criteria  map[int]string // column → excelize filter expression
 }
 
-// filterHides reports whether the active filter hides a row on the current
-// sheet. Header rows, rows outside the data range, and rows on other sheets
-// are never hidden.
-func (a *App) filterHides(row int) bool {
-	f := a.filter
-	if !f.active || f.sheet != a.sheet {
-		return false
+func (a *App) syncFilterFromWorkbook() {
+	info, ok := a.wb.Filter(a.sheet)
+	if !ok {
+		a.filter = filterState{}
+		return
 	}
-	if row < f.minRow || row > f.maxRow {
-		return false
+	a.filter = filterState{
+		active:    true,
+		sheet:     a.sheet,
+		headerRow: info.MinRow,
+		minRow:    info.MinRow + 1,
+		maxRow:    info.MaxRow,
+		minCol:    info.MinCol,
+		maxCol:    info.MaxCol,
+		criteria:  info.Criteria,
 	}
-	for col, crit := range f.criteria {
-		if crit == "" {
-			continue
-		}
-		v := a.wb.DisplayValue(a.sheet, engine.CellName(col, row))
-		if !strings.Contains(strings.ToLower(v), strings.ToLower(crit)) {
-			return true
-		}
-	}
-	return false
 }
 
-// openFilter establishes a filter over the used range (header = row 1) if one
-// isn't already active on this sheet, then prompts for the active column's
-// criterion.
+// openFilter establishes a filter over the table under the cursor, or the
+// used range when the cursor isn't in a table.
 func (a *App) openFilter() {
+	a.syncFilterFromWorkbook()
 	maxCol, maxRow := a.wb.UsedRange(a.sheet)
 	if maxRow < 2 {
 		a.statusMsg = "Need a header row and at least one data row to filter"
 		return
 	}
 	if !a.filter.active || a.filter.sheet != a.sheet {
+		minCol, minRow := 1, 1
+		if table, ok := a.wb.TableAt(a.sheet, a.cursor.Col, a.cursor.Row); ok {
+			minCol, minRow, maxCol, maxRow = table.MinCol, table.MinRow, table.MaxCol, table.MaxRow
+		}
 		a.filter = filterState{
 			active:    true,
 			sheet:     a.sheet,
-			headerRow: 1,
-			minRow:    2,
+			headerRow: minRow,
+			minRow:    minRow + 1,
 			maxRow:    maxRow,
-			minCol:    1,
+			minCol:    minCol,
 			maxCol:    maxCol,
 			criteria:  map[int]string{},
 		}
-	} else {
-		// Re-establish the extent in case the data grew or shrank.
-		a.filter.maxRow, a.filter.maxCol = maxRow, maxCol
 	}
 
-	a.filterCol = a.cursor.Col
+	a.filterCol = clamp(a.cursor.Col, a.filter.minCol, a.filter.maxCol)
 	prefill := a.filter.criteria[a.filterCol]
-	a.prompt.open(promptFilter, fmt.Sprintf("Filter %s contains: ", engine.ColumnName(a.filterCol)), prefill)
+	a.prompt.open(promptFilter, fmt.Sprintf("Filter %s (text or >= 10): ", engine.ColumnName(a.filterCol)), prefill)
 }
 
-// applyFilterCriterion sets (or, when empty, clears) the criterion for a column
-// and refreshes the view: the cursor jumps to a visible row if its current row
-// became hidden.
+// applyFilterCriterion persists one column's criterion. Plain text remains a
+// convenient contains filter; comparisons can use expressions such as >= 10.
 func (a *App) applyFilterCriterion(col int, crit string) {
+	crit = normalizeFilterExpression(crit)
 	if crit == "" {
 		delete(a.filter.criteria, col)
 	} else {
 		a.filter.criteria[col] = crit
 	}
+	info := document.AutoFilterInfo{
+		MinCol: a.filter.minCol, MinRow: a.filter.headerRow,
+		MaxCol: a.filter.maxCol, MaxRow: a.filter.maxRow,
+		Criteria: a.filter.criteria,
+	}
+	if !a.structuralOp("Filter", func() error { return a.wb.SetAutoFilter(a.sheet, info) }) {
+		a.syncFilterFromWorkbook()
+		return
+	}
+	a.syncFilterFromWorkbook()
 
 	if a.rowHidden(a.cursor.Row) {
 		a.setCursor(position{Col: a.cursor.Col, Row: a.snapToVisibleRow(a.cursor.Row, 1)}, false)
@@ -99,14 +103,36 @@ func (a *App) applyFilterCriterion(col int, crit string) {
 	a.statusMsg = fmt.Sprintf("Showing %d of %d rows", visible, total)
 }
 
-// clearFilter turns off filtering and reveals every row.
+// clearFilter removes all criteria while keeping the persisted filter range.
 func (a *App) clearFilter() {
+	a.syncFilterFromWorkbook()
 	if !a.filter.active {
 		a.statusMsg = "No filter to clear"
 		return
 	}
-	a.filter = filterState{}
+	info := document.AutoFilterInfo{
+		MinCol: a.filter.minCol, MinRow: a.filter.headerRow,
+		MaxCol: a.filter.maxCol, MaxRow: a.filter.maxRow,
+		Criteria: map[int]string{},
+	}
+	if !a.structuralOp("Clear Filter", func() error { return a.wb.SetAutoFilter(a.sheet, info) }) {
+		return
+	}
+	a.syncFilterFromWorkbook()
 	a.statusMsg = "Filter cleared"
+}
+
+func normalizeFilterExpression(input string) string {
+	input = strings.TrimSpace(input)
+	if input == "" || strings.HasPrefix(strings.ToLower(input), "x ") {
+		return input
+	}
+	for _, op := range []string{"<=", ">=", "<>", "!=", "==", "=", "<", ">"} {
+		if strings.HasPrefix(input, op) {
+			return "x " + op + " " + strings.TrimSpace(strings.TrimPrefix(input, op))
+		}
+	}
+	return "x == *" + input + "*"
 }
 
 // snapToVisibleRow returns the nearest non-hidden row at or beyond row in

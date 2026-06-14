@@ -135,7 +135,7 @@ func (w *Workbook) SetCell(sheet, cellName, input string) error {
 		if err := w.file.SetCellFormula(sheet, cell, formula); err != nil {
 			return fmt.Errorf("set formula %s!%s: %w", sheet, cell, err)
 		}
-		w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefsWithNames(sheet, formula, w.names)))
+		w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefsFull(sheet, formula, w.names, w.engineTables(), node.Row)))
 		if engine.IsOpaqueFormula(formula) {
 			w.opaque[node] = true
 		} else {

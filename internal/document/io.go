@@ -71,7 +71,7 @@ func (w *Workbook) rebuildGraph() {
 					}
 				}
 				node := engine.Node{Sheet: sheet, Col: c + 1, Row: r + 1}
-				w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefsWithNames(sheet, formula, w.names)))
+				w.graph.Set(node, w.canonicalizeSheets(engine.ExtractRefsFull(sheet, formula, w.names, w.engineTables(), node.Row)))
 				if engine.IsOpaqueFormula(formula) {
 					w.opaque[node] = true
 				}

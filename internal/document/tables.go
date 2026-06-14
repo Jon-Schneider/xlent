@@ -50,6 +50,23 @@ func (w *Workbook) loadTables() {
 // Tables returns the workbook's table index.
 func (w *Workbook) Tables() []TableInfo { return w.tables }
 
+// engineTables projects the table index into the engine's structured-reference
+// metadata for dependency resolution.
+func (w *Workbook) engineTables() []engine.Table {
+	if len(w.tables) == 0 {
+		return nil
+	}
+	out := make([]engine.Table, 0, len(w.tables))
+	for _, t := range w.tables {
+		out = append(out, engine.Table{
+			Name: t.Name, Sheet: t.Sheet,
+			MinCol: t.MinCol, MinRow: t.MinRow, MaxCol: t.MaxCol, MaxRow: t.MaxRow,
+			Headers: t.Headers,
+		})
+	}
+	return out
+}
+
 // AddTable creates an Excel table over the given range (its first row is the
 // header) with a default banded style. The header cells must be non-empty and
 // unique, as Excel requires.

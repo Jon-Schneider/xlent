@@ -48,6 +48,10 @@ type Workbook struct {
 	// so formulas using a name depend on the cells it covers.
 	names map[string]engine.Ref
 
+	// tables indexes the workbook's Excel tables (for listing, auto-expansion,
+	// and structured-reference dependency tracking).
+	tables []TableInfo
+
 	// extents caches UsedRange per sheet; cleared by any edit to that sheet.
 	extents map[string][2]int
 

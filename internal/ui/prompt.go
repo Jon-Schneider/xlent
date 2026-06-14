@@ -15,6 +15,7 @@ const (
 	promptFilter
 	promptDefineName
 	promptDeleteName
+	promptCreateTable
 	promptRenameSheet
 	promptConfirmDirty // "Save changes before <pending>? (y/n)"
 )

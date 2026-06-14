@@ -51,6 +51,7 @@ func Load(path string) (*Workbook, error) {
 // semantically neutral, so it doesn't mark the workbook dirty.
 func (w *Workbook) rebuildGraph() {
 	w.loadNames()
+	w.loadTables()
 	sheets := w.Sheets()
 	for _, sheet := range sheets {
 		rows, err := w.file.GetRows(sheet)

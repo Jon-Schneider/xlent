@@ -611,6 +611,10 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.prompt.open(promptDefineName, "Define name: ", "")
 	case actDeleteName:
 		a.prompt.open(promptDeleteName, "Delete name: ", "")
+	case actCreateTable:
+		a.prompt.open(promptCreateTable, "Table name: ", a.nextTableName())
+	case actRemoveTable:
+		a.removeTable()
 	case actFreeze:
 		a.freezePanes()
 	case actUnfreeze:

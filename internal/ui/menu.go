@@ -55,6 +55,8 @@ const (
 	actClearFilter
 	actDefineName
 	actDeleteName
+	actCreateTable
+	actRemoveTable
 	actFreeze
 	actUnfreeze
 	actRecalc
@@ -134,6 +136,9 @@ func defaultMenus() []menu {
 			divider,
 			{label: "Filter…", shortcut: "Ctrl+Shift+L", action: actFilter},
 			{label: "Clear Filter", action: actClearFilter},
+			divider,
+			{label: "Create Table…", action: actCreateTable},
+			{label: "Remove Table", action: actRemoveTable},
 			divider,
 			{label: "Fill Down", shortcut: "Ctrl+D", action: actFillDown},
 			{label: "Fill Right", shortcut: "Ctrl+R", action: actFillRight},

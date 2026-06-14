@@ -31,13 +31,25 @@ func (a *App) commitEdit(dCol, dRow int) {
 	a.editor.stop()
 
 	if before != after {
-		if err := a.wb.SetCell(a.sheet, cell, after); err != nil {
+		// An edit just below a table grows the table; the edit and the resize
+		// must undo together, so route it through a snapshot command.
+		if after != "" && a.wb.WouldExpandTable(a.sheet, a.cursor.Col, a.cursor.Row) {
+			col, row := a.cursor.Col, a.cursor.Row
+			a.structuralOp("Edit", func() error {
+				if err := a.wb.SetCell(a.sheet, cell, after); err != nil {
+					return err
+				}
+				a.wb.ExpandTableForEdit(a.sheet, col, row)
+				return nil
+			})
+		} else if err := a.wb.SetCell(a.sheet, cell, after); err != nil {
 			a.statusMsg = err.Error()
 			return
+		} else {
+			a.undoStack.Record(undo.Command{Label: "Edit", Edits: []undo.CellEdit{
+				{Sheet: a.sheet, Cell: cell, Before: before, After: after},
+			}})
 		}
-		a.undoStack.Record(undo.Command{Label: "Edit", Edits: []undo.CellEdit{
-			{Sheet: a.sheet, Cell: cell, Before: before, After: after},
-		}})
 	}
 	if dCol != 0 || dRow != 0 {
 		a.moveCursor(dCol, dRow, false)
@@ -649,6 +661,58 @@ func absRange(sel rect) string {
 	return tl + ":$" + engine.ColumnName(sel.MaxCol) + "$" + strconv.Itoa(sel.MaxRow)
 }
 
+// createTable turns the current selection into an Excel table (first row =
+// headers), snapshot-undoable. A single-cell selection expands to the used
+// range first, so "make this a table" works from inside a data block.
+func (a *App) createTable(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = a.nextTableName()
+	}
+	sel := rectBetween(a.anchor, a.cursor)
+	if sel.isSingleCell() {
+		maxCol, maxRow := a.wb.UsedRange(a.sheet)
+		if maxRow < 1 {
+			a.statusMsg = "Nothing to make into a table"
+			return
+		}
+		sel = rect{MinCol: 1, MinRow: 1, MaxCol: maxCol, MaxRow: maxRow}
+	}
+	if a.structuralOp("Create Table", func() error {
+		return a.wb.AddTable(a.sheet, sel.String(), name)
+	}) {
+		a.statusMsg = fmt.Sprintf("Created table %s over %s", name, sel.String())
+	}
+}
+
+// removeTable deletes the table under the cursor, keeping its cell content.
+func (a *App) removeTable() {
+	t, ok := a.wb.TableAt(a.sheet, a.cursor.Col, a.cursor.Row)
+	if !ok {
+		a.statusMsg = "The cursor is not in a table"
+		return
+	}
+	if a.structuralOp("Remove Table", func() error {
+		return a.wb.RemoveTable(t.Name)
+	}) {
+		a.statusMsg = "Removed table " + t.Name
+	}
+}
+
+// nextTableName returns the first free "TableN" name.
+func (a *App) nextTableName() string {
+	taken := make(map[string]bool)
+	for _, t := range a.wb.Tables() {
+		taken[t.Name] = true
+	}
+	for i := 1; ; i++ {
+		name := fmt.Sprintf("Table%d", i)
+		if !taken[name] {
+			return name
+		}
+	}
+}
+
 // freezePanes freezes the rows above and columns left of the active cell,
 // Excel-style. It's a view/layout property (like column widths), so it isn't
 // undoable; it does round-trip through save.
@@ -792,6 +856,8 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 		a.defineName(text)
 	case promptDeleteName:
 		a.deleteName(text)
+	case promptCreateTable:
+		a.createTable(text)
 
 	case promptRenameSheet:
 		a.renameSheet(text)

@@ -481,18 +481,16 @@ func (a *App) insertCols() {
 	}
 }
 
-// deleteRows removes every row the selection touches.
+// deleteRows removes every row the selection touches. Formulas that referenced
+// the deleted rows resolve to #REF! (handled in RemoveRows), matching Excel.
 func (a *App) deleteRows() {
 	sel := rectBetween(a.anchor, a.cursor)
 	count := sel.MaxRow - sel.MinRow + 1
-	// Count references into the doomed rows before the delete; excelize can
-	// silently misdirect them instead of producing #REF!.
-	affected := a.wb.FormulasReferencing(a.sheet, 1, sel.MinRow, engine.MaxCols, sel.MaxRow)
 	if a.structuralOp("Delete Rows", func() error {
 		return a.wb.RemoveRows(a.sheet, sel.MinRow, count)
 	}) {
 		a.setCursor(position{Col: a.cursor.Col, Row: sel.MinRow}, false)
-		a.statusMsg = deleteStatus(count, "row", affected)
+		a.statusMsg = fmt.Sprintf("Deleted %d row(s)", count)
 	}
 }
 
@@ -500,24 +498,12 @@ func (a *App) deleteRows() {
 func (a *App) deleteCols() {
 	sel := rectBetween(a.anchor, a.cursor)
 	count := sel.MaxCol - sel.MinCol + 1
-	affected := a.wb.FormulasReferencing(a.sheet, sel.MinCol, 1, sel.MaxCol, engine.MaxRows)
 	if a.structuralOp("Delete Columns", func() error {
 		return a.wb.RemoveCols(a.sheet, sel.MinCol, count)
 	}) {
 		a.setCursor(position{Col: sel.MinCol, Row: a.cursor.Row}, false)
-		a.statusMsg = deleteStatus(count, "column", affected)
+		a.statusMsg = fmt.Sprintf("Deleted %d column(s)", count)
 	}
-}
-
-// deleteStatus builds the post-delete status line, appending a correctness
-// warning when formulas referenced the deleted region — those references may
-// now be silently wrong rather than #REF!.
-func deleteStatus(count int, unit string, affected int) string {
-	msg := fmt.Sprintf("Deleted %d %s(s)", count, unit)
-	if affected > 0 {
-		msg += fmt.Sprintf(" — ⚠ %d formula(s) referenced deleted cells; verify results", affected)
-	}
-	return msg
 }
 
 // applyNumberFormat formats the selection as one snapshot-undoable command

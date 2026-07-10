@@ -566,13 +566,14 @@ func (a *App) handleMenuClick(m tea.Mouse) (bool, tea.Model, tea.Cmd) {
 
 	// Click inside the open dropdown executes the item under the pointer.
 	line := m.Y - 1
-	if line >= 0 && line < len(a.menuBar.dropLines) &&
-		m.X >= a.menuBar.dropX && m.X < a.menuBar.dropX+a.menuBar.dropW {
-		idx := a.menuBar.dropLines[line]
-		if idx < 0 {
+	dropX, dropW := a.menuDropdownBounds()
+	items := a.menus[a.menuBar.active].items
+	if line >= 0 && line < len(items) &&
+		m.X >= dropX && m.X < dropX+dropW {
+		if items[line].divider {
 			return true, a, nil // divider
 		}
-		action := a.menus[a.menuBar.active].items[idx].action
+		action := items[line].action
 		a.menuBar.close()
 		model, cmd := a.execMenuAction(action)
 		return true, model, cmd

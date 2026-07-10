@@ -131,20 +131,48 @@ func TestMenuItemClickExecutes(t *testing.T) {
 	if newSheetItem < 0 {
 		t.Fatal("no New Sheet item in the View menu")
 	}
-	line := -1
-	for ln, idx := range app.menuBar.dropLines {
-		if idx == newSheetItem {
-			line = ln
-			break
-		}
-	}
-	app.Update(tea.MouseClickMsg{X: app.menuBar.dropX + 1, Y: 1 + line, Button: tea.MouseLeft})
+	dropX, _ := app.menuDropdownBounds()
+	app.Update(tea.MouseClickMsg{X: dropX + 1, Y: 1 + newSheetItem, Button: tea.MouseLeft})
 
 	if len(app.wb.Sheets()) != 2 {
 		t.Fatalf("sheets = %v, want a second sheet added", app.wb.Sheets())
 	}
 	if app.sheet == "Sheet1" {
 		t.Error("active sheet must switch to the new sheet")
+	}
+}
+
+func TestMenuItemClickExecutesBeforeNextRender(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.View() // capture menu-title geometry
+
+	viewIdx := -1
+	for i, m := range app.menus {
+		if m.title == "View" {
+			viewIdx = i
+			break
+		}
+	}
+	if viewIdx < 0 {
+		t.Fatal("no View menu in the menu bar")
+	}
+	app.Update(tea.MouseClickMsg{X: app.menuBar.titleX[viewIdx][0], Y: 0, Button: tea.MouseLeft})
+
+	newSheetItem := -1
+	for i, it := range app.menus[viewIdx].items {
+		if it.label == "New Sheet" {
+			newSheetItem = i
+			break
+		}
+	}
+	if newSheetItem < 0 {
+		t.Fatal("no New Sheet item in the View menu")
+	}
+	dropX, _ := app.menuDropdownBounds()
+	app.Update(tea.MouseClickMsg{X: dropX + 1, Y: 1 + newSheetItem, Button: tea.MouseLeft})
+
+	if len(app.wb.Sheets()) != 2 {
+		t.Fatalf("sheets = %v, want a second sheet added", app.wb.Sheets())
 	}
 }
 

@@ -176,10 +176,7 @@ type menuBar struct {
 	active   int // which menu is open / highlighted
 	selected int // highlighted item within the open menu
 
-	titleX    [][2]int // x span of each title in the bar row
-	dropX     int      // dropdown left edge
-	dropW     int
-	dropLines []int // item index per dropdown line, -1 for dividers
+	titleX [][2]int // x span of each title in the bar row
 }
 
 func (m *menuBar) openMenu(i int) {
@@ -263,28 +260,42 @@ func (a *App) renderMenuBar(width int) string {
 	return b.String()
 }
 
-// renderDropdown produces the open menu's lines and records its geometry.
+// menuDropdownBounds returns the active dropdown's on-screen bounds. It is
+// derived from the current state so mouse hit testing never depends on a
+// previous render having populated cached geometry.
+func (a *App) menuDropdownBounds() (x, width int) {
+	m := a.menus[a.menuBar.active]
+
+	labelW, shortcutW := 0, 0
+	for _, it := range m.items {
+		labelW = max(labelW, lipgloss.Width(it.label))
+		shortcutW = max(shortcutW, lipgloss.Width(it.shortcut))
+	}
+	inner := labelW + 2 + shortcutW
+	width = inner + 2
+	x = min(a.menuBar.titleX[a.menuBar.active][0], max(a.width, 20)-width)
+	return x, width
+}
+
+// renderDropdown produces the open menu's lines.
 func (a *App) renderDropdown() []string {
 	m := a.menus[a.menuBar.active]
 
 	labelW, shortcutW := 0, 0
 	for _, it := range m.items {
-		labelW = max(labelW, len(it.label))
-		shortcutW = max(shortcutW, len(it.shortcut))
+		labelW = max(labelW, lipgloss.Width(it.label))
+		shortcutW = max(shortcutW, lipgloss.Width(it.shortcut))
 	}
 	inner := labelW + 2 + shortcutW
-	a.menuBar.dropW = inner + 2
-	a.menuBar.dropX = min(a.menuBar.titleX[a.menuBar.active][0], max(a.width, 20)-a.menuBar.dropW)
-	a.menuBar.dropLines = a.menuBar.dropLines[:0]
+	_, width := a.menuDropdownBounds()
 
 	var lines []string
 	for i, it := range m.items {
 		if it.divider {
-			lines = append(lines, styleMenuDivider.Render(strings.Repeat("─", a.menuBar.dropW)))
-			a.menuBar.dropLines = append(a.menuBar.dropLines, -1)
+			lines = append(lines, styleMenuDivider.Render(strings.Repeat("─", width)))
 			continue
 		}
-		pad := inner - len(it.label) - len(it.shortcut)
+		pad := inner - lipgloss.Width(it.label) - lipgloss.Width(it.shortcut)
 		itemStyle, shortcutStyle := styleMenuItem, styleMenuShortcut
 		if i == a.menuBar.selected {
 			itemStyle, shortcutStyle = styleMenuItemActive, styleMenuShortcutActive
@@ -292,7 +303,6 @@ func (a *App) renderDropdown() []string {
 		lines = append(lines,
 			itemStyle.Render(" "+it.label+strings.Repeat(" ", pad))+
 				shortcutStyle.Render(it.shortcut)+itemStyle.Render(" "))
-		a.menuBar.dropLines = append(a.menuBar.dropLines, i)
 	}
 	return lines
 }
@@ -305,7 +315,7 @@ func (a *App) overlayDropdown(content string) string {
 	}
 	lines := strings.Split(content, "\n")
 	drop := a.renderDropdown()
-	x, w := a.menuBar.dropX, a.menuBar.dropW
+	x, w := a.menuDropdownBounds()
 
 	for i, dl := range drop {
 		y := 1 + i

@@ -294,7 +294,7 @@ func (a *App) renderGrid(layout gridLayout) string {
 			// reverse-video style here.
 			if a.editor.active && onEditSheet && p == a.cursor {
 				visible, _ := a.editor.window(w - 2)
-				b.WriteString(styleCell.Width(w).MaxWidth(w).Align(lipgloss.Left).Padding(0, 1).Render(visible))
+				b.WriteString(styleCell.Width(w).MaxWidth(w).MaxHeight(1).Align(lipgloss.Left).Padding(0, 1).Render(visible))
 				continue
 			}
 
@@ -331,7 +331,7 @@ func (a *App) renderGrid(layout gridLayout) string {
 				align = lipgloss.Right
 			}
 
-			b.WriteString(style.Width(w).MaxWidth(w).Align(align).Padding(0, 1).Render(value))
+			b.WriteString(style.Width(w).MaxWidth(w).MaxHeight(1).Align(align).Padding(0, 1).Render(value))
 		}
 		if i < layout.rows-1 {
 			b.WriteByte('\n')

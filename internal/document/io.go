@@ -178,7 +178,7 @@ func (w *Workbook) SaveAs(path string) error {
 	default:
 		return fmt.Errorf("unsupported file type %q (expected .xlsx, .xlsm, .xltm, .xltx, or .csv)", ext)
 	}
-	if err := writeAtomically(destinationPath, operation); err != nil {
+	if err := writeAtomically(destinationPath, filepath.Base(path), operation); err != nil {
 		return fmt.Errorf("save %s: %w", path, err)
 	}
 
@@ -191,13 +191,13 @@ func (w *Workbook) SaveAs(path string) error {
 // writeAtomically replaces path only after operation has finished and its
 // output is synced to disk. Keeping the temporary file beside path makes the
 // rename atomic because both files are on the same filesystem.
-func writeAtomically(path string, operation fileWriteOperation) error {
+func writeAtomically(path, temporaryFilename string, operation fileWriteOperation) error {
 	mode, destinationExists, err := destinationPermissions(path)
 	if err != nil {
 		return err
 	}
 
-	temporaryFile, err := createTemporarySaveFile(filepath.Dir(path), filepath.Base(path))
+	temporaryFile, err := createTemporarySaveFile(filepath.Dir(path), temporaryFilename)
 	if err != nil {
 		return fmt.Errorf("create temporary file: %w", err)
 	}

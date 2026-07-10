@@ -340,6 +340,38 @@ func TestSaveAsFollowsSymbolicLinks(t *testing.T) {
 	}
 }
 
+func TestSaveAsUsesRequestedExtensionThroughSymbolicLink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symbolic links requires additional Windows privileges")
+	}
+
+	directory := t.TempDir()
+	targetPath := filepath.Join(directory, "target.csv")
+	if err := os.WriteFile(targetPath, []byte("old contents\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(directory, "alias.xlsx")
+	if err := os.Symlink(filepath.Base(targetPath), linkPath); err != nil {
+		t.Fatal(err)
+	}
+
+	workbook := New()
+	defer workbook.Close()
+	mustSetCell(t, workbook, workbook.Sheets()[0], "A1", "new contents")
+	if err := workbook.SaveAs(linkPath); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+
+	loaded, err := Load(linkPath)
+	if err != nil {
+		t.Fatalf("Load through symbolic link: %v", err)
+	}
+	defer loaded.Close()
+	if got := loaded.DisplayValue(loaded.Sheets()[0], "A1"); got != "new contents" {
+		t.Errorf("A1 = %q, want new contents", got)
+	}
+}
+
 func TestSaveAsLeavesWorkbookUnchangedWhenReplacementFails(t *testing.T) {
 	for _, extension := range []string{".xlsx", ".csv"} {
 		t.Run(extension, func(t *testing.T) {
@@ -375,7 +407,7 @@ func TestWriteAtomicallyLeavesDestinationUntouchedWhenSerializationFails(t *test
 	}
 
 	writeErr := errors.New("serialization failed")
-	err := writeAtomically(path, failedFileWriteOperation{err: writeErr})
+	err := writeAtomically(path, filepath.Base(path), failedFileWriteOperation{err: writeErr})
 	if !errors.Is(err, writeErr) {
 		t.Fatalf("writeAtomically error = %v, want serialization failure", err)
 	}
@@ -397,7 +429,7 @@ func TestWriteAtomicallyRemovesTemporaryFileWhenReplacementFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := writeAtomically(path, contentsFileWriteOperation{contents: []byte("new contents\n")})
+	err := writeAtomically(path, filepath.Base(path), contentsFileWriteOperation{contents: []byte("new contents\n")})
 	if err == nil {
 		t.Fatal("writeAtomically succeeded when replacing a directory")
 	}

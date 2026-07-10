@@ -15,10 +15,6 @@ func replaceDestination(temporaryPath, destinationPath string, _ bool) error {
 	return nil
 }
 
-func preserveDestinationPermissions(string, string, bool) error {
-	return nil
-}
-
 func syncParentDirectory(path string) error {
 	directory, err := os.Open(filepath.Dir(path))
 	if err != nil {

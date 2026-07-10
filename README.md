@@ -25,6 +25,7 @@ from Excel — no modes, no new grammar to learn.
 ```sh
 go build -o xlent ./cmd/xlent     # or: ./build.sh (vet + tests + build)
 ./xlent budget.xlsx            # open a file, or run bare for a blank workbook
+./xlent --help                 # usage; --version prints the build version
 ```
 
 Requires Go 1.25+.

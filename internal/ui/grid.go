@@ -10,7 +10,12 @@ import (
 	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
-const defaultColWidth = 10
+const (
+	defaultColWidth = 10
+	// cellPadding is the horizontal padding lipgloss adds on each side of a
+	// grid cell, so a cell of render width w shows w-2*cellPadding of content.
+	cellPadding = 1
+)
 
 // position is a 1-based cell coordinate on the active sheet.
 type position struct {
@@ -88,21 +93,59 @@ type gridLayout struct {
 	tabX       [][2]int // x ranges of sheet tabs, parallel to workbook sheets
 }
 
-// colRender is the per-column render plan for one grid row. It is computed for
-// the whole row before anything is drawn so that Excel-style overflow works:
-// text too wide for its column spills right into adjacent blank cells, while an
-// overwide number renders as a "#" fill.
-type colRender struct {
+// cellPlan is the per-cell render plan for one grid row. A whole row is planned
+// before anything is drawn so that Excel-style overflow works: text too wide
+// for its column spills right into adjacent blank cells, while an overwide
+// non-text value (number, date, currency, …) renders as a "#" fill.
+type cellPlan struct {
+	col      int            // sheet column, for sheet-adjacency checks during spill
 	w        int            // own render width (merge-aware)
-	spanW    int            // total width when spilling right; 0 means no spill
+	spanW    int            // total width once spilling right; 0 means no spill
 	value    string         // display text ("" for blank / merge-covered cells)
 	style    lipgloss.Style // background/emphasis style for the cell
 	align    lipgloss.Position
-	numeric  bool // right-aligned number; shows "#" fill when too wide
+	fill     bool // non-text value; shows a "#" fill when too narrow
+	spills   bool // spillable text source (blockers: not a number/error/merge/highlight)
+	receives bool // blank & unclaimed; may absorb a spill from the left
 	editor   bool // active in-cell editor; never spills or fills
 	skip     bool // horizontally merge-covered; emits nothing
 	consumed bool // absorbed by a spill from the left; emits nothing
-	receives bool // blank & unclaimed; may absorb a spill from the left
+}
+
+// resolveSpill applies Excel-style rightward text overflow to one row's plans.
+// A spillable cell whose text is wider than its own column borrows width from
+// the blank cells immediately to its right — but only across cells that are
+// genuinely adjacent on the sheet. A gap in column numbers (a frozen-pane seam,
+// a horizontal scroll jump, or a hidden column) stops the spill, because the
+// off-screen or hidden neighbor might be non-blank and must still clip the
+// text. Overflow is resolved only over the visible columns, so a source
+// scrolled off the left edge does not paint over its now-visible receivers;
+// they render blank (a known, deliberate limitation).
+func resolveSpill(plans []cellPlan) {
+	for i := range plans {
+		src := &plans[i]
+		if !src.spills {
+			continue
+		}
+		vw := ansi.StringWidth(src.value)
+		if vw <= src.w-2*cellPadding {
+			continue // already fits its own column
+		}
+		span := src.w
+		for j := i + 1; j < len(plans); j++ {
+			if plans[j].col != plans[j-1].col+1 || !plans[j].receives {
+				break
+			}
+			span += plans[j].w
+			plans[j].consumed = true
+			if vw <= span-2*cellPadding {
+				break // enough borrowed width to show it all
+			}
+		}
+		if span > src.w {
+			src.spanW = span
+		}
+	}
 }
 
 // colAt maps a screen x to a visible column number, or 0 if outside cells.
@@ -298,102 +341,11 @@ func (a *App) renderGrid(layout gridLayout) string {
 		}
 		b.WriteString(gutterStyle.Width(layout.gutterW).MaxWidth(layout.gutterW).Align(lipgloss.Right).Render(strconv.Itoa(row) + " "))
 
-		// First pass: build a render plan for every visible column. The plan is
-		// needed up front because Excel-style overflow lets one cell's text
-		// spill across its neighbors, so a cell cannot be rendered in isolation.
-		plans := make([]colRender, len(layout.cols))
-		for idx, c := range layout.cols {
-			p := position{Col: c, Row: row}
-			cr := colRender{w: a.cellRenderWidth(layout, p), style: styleCell, align: lipgloss.Left}
-			merged, inMerge := a.wb.MergedRangeAt(a.sheet, c, row)
-			mergeAnchor := position{Col: merged.MinCol, Row: merged.MinRow}
-			if inMerge && row == merged.MinRow && c > merged.MinCol && visibleCols[merged.MinCol] {
-				cr.skip = true
-				plans[idx] = cr
-				continue
-			}
-
-			// While editing, the active cell shows the raw editor text with
-			// the real terminal cursor (placed by placeCursor), so no
-			// reverse-video style here.
-			if a.editor.active && onEditSheet && p == a.cursor {
-				cr.editor = true
-				cr.value, _ = a.editor.window(cr.w - 2)
-				plans[idx] = cr
-				continue
-			}
-
-			value := ""
-			if !inMerge || p == mergeAnchor {
-				value = a.wb.DisplayValue(a.sheet, p.cellName())
-			}
-
-			style := styleCell
-			highlighted := false
-			refTint, tinted := refTintAt(refSpans, a.sheet, p)
-			switch {
-			case pointing && pointed.contains(p):
-				style = stylePointedRef
-				highlighted = true
-			case tinted:
-				style = refTint
-				highlighted = true
-			case onEditSheet && p == a.cursor:
-				style = styleCursorCell
-				highlighted = true
-			case onEditSheet && (sel.contains(p) || inMerge && sel.contains(mergeAnchor)):
-				style = styleCellSelected
-				highlighted = true
-			case isErrorValue(value):
-				style = styleErrorValue
-			}
-
-			styleCellName := p.cellName()
-			if inMerge {
-				styleCellName = mergeAnchor.cellName()
-			}
-			if bold, italic, underline := a.wb.CellEmphasis(a.sheet, styleCellName); bold || italic || underline {
-				style = style.Bold(bold).Italic(italic).Underline(underline)
-			}
-
-			cr.value = value
-			cr.style = style
-			cr.numeric = isNumeric(value)
-			if cr.numeric {
-				cr.align = lipgloss.Right
-			}
-			// A blank cell can absorb text spilling in from the left only when
-			// nothing else claims it: no highlight (cursor/selection/ref tint)
-			// and no merge membership, so the spill never paints over those.
-			cr.receives = value == "" && !highlighted && !inMerge
-			plans[idx] = cr
-		}
-
-		// Second pass: resolve Excel-style horizontal overflow. Text wider than
-		// its column spills right across consecutive receiving cells until it
-		// fits or a non-blank/edge cell stops it. Numbers never spill (they
-		// render as "#" fills below), and non-numeric text is always
-		// left-aligned here, so the spill is always rightward.
-		for idx := range plans {
-			src := &plans[idx]
-			if src.skip || src.editor || src.numeric || src.value == "" {
-				continue
-			}
-			if content := src.w - 2; content <= 0 || ansi.StringWidth(src.value) <= content {
-				continue
-			}
-			span := src.w
-			for j := idx + 1; j < len(plans) && plans[j].receives && !plans[j].consumed && ansi.StringWidth(src.value) > span-2; j++ {
-				span += plans[j].w
-				plans[j].consumed = true
-			}
-			if span > src.w {
-				src.spanW = span
-			}
-		}
-
-		// Third pass: emit each column. Consumed cells are covered by the
-		// wider block their spill source renders, so they emit nothing.
+		// Overflow needs the whole row planned before anything is drawn, since
+		// one cell's text can spill across its neighbors: plan, resolve spill,
+		// then emit.
+		plans := a.planRow(layout, row, sel, refSpans, pointing, pointed, onEditSheet, visibleCols)
+		resolveSpill(plans)
 		for idx := range plans {
 			cr := plans[idx]
 			if cr.skip || cr.consumed {
@@ -404,14 +356,14 @@ func (a *App) renderGrid(layout gridLayout) string {
 				w = cr.spanW
 			}
 			value := cr.value
-			// A number too wide for its cell can't spill, so show "#" fills
-			// across the content area, matching Excel.
-			if cr.numeric {
-				if content := w - 2; content > 0 && ansi.StringWidth(value) > content {
+			// A non-text value too narrow for its cell can't spill, so show a
+			// "#" fill across the content area, matching Excel.
+			if cr.fill {
+				if content := w - 2*cellPadding; content > 0 && ansi.StringWidth(value) > content {
 					value = strings.Repeat("#", content)
 				}
 			}
-			b.WriteString(cr.style.Width(w).MaxWidth(w).MaxHeight(1).Align(cr.align).Padding(0, 1).Render(value))
+			b.WriteString(cr.style.Width(w).MaxWidth(w).MaxHeight(1).Align(cr.align).Padding(0, cellPadding).Render(value))
 		}
 		if i < layout.rows-1 {
 			b.WriteByte('\n')
@@ -426,6 +378,90 @@ func (a *App) renderGrid(layout gridLayout) string {
 		}
 	}
 	return b.String()
+}
+
+// planRow builds a render plan for every visible column in one grid row,
+// classifying each cell as a spill source, a "#"-fill, a blank spill receiver,
+// a merge-covered cell, or the in-cell editor. resolveSpill then consumes this
+// to lay out horizontal overflow.
+func (a *App) planRow(layout gridLayout, row int, sel rect, refSpans []refSpan, pointing bool, pointed rect, onEditSheet bool, visibleCols map[int]bool) []cellPlan {
+	plans := make([]cellPlan, len(layout.cols))
+	for idx, c := range layout.cols {
+		p := position{Col: c, Row: row}
+		cr := cellPlan{col: c, w: a.cellRenderWidth(layout, p), style: styleCell, align: lipgloss.Left}
+		merged, inMerge := a.wb.MergedRangeAt(a.sheet, c, row)
+		mergeAnchor := position{Col: merged.MinCol, Row: merged.MinRow}
+		if inMerge && row == merged.MinRow && c > merged.MinCol && visibleCols[merged.MinCol] {
+			cr.skip = true
+			plans[idx] = cr
+			continue
+		}
+
+		// While editing, the active cell shows the raw editor text with the
+		// real terminal cursor (placed by placeCursor), so no reverse-video
+		// style here. The editor never spills or receives spill.
+		if a.editor.active && onEditSheet && p == a.cursor {
+			cr.editor = true
+			cr.value, _ = a.editor.window(cr.w - 2*cellPadding)
+			plans[idx] = cr
+			continue
+		}
+
+		value := ""
+		if !inMerge || p == mergeAnchor {
+			value = a.wb.DisplayValue(a.sheet, p.cellName())
+		}
+
+		style := styleCell
+		highlighted := false
+		refTint, tinted := refTintAt(refSpans, a.sheet, p)
+		switch {
+		case pointing && pointed.contains(p):
+			style = stylePointedRef
+			highlighted = true
+		case tinted:
+			style = refTint
+			highlighted = true
+		case onEditSheet && p == a.cursor:
+			style = styleCursorCell
+			highlighted = true
+		case onEditSheet && (sel.contains(p) || inMerge && sel.contains(mergeAnchor)):
+			style = styleCellSelected
+			highlighted = true
+		case isErrorValue(value):
+			style = styleErrorValue
+		}
+
+		styleCellName := p.cellName()
+		if inMerge {
+			styleCellName = mergeAnchor.cellName()
+		}
+		if bold, italic, underline := a.wb.CellEmphasis(a.sheet, styleCellName); bold || italic || underline {
+			style = style.Bold(bold).Italic(italic).Underline(underline)
+		}
+
+		cr.value = value
+		cr.style = style
+		if value != "" {
+			text := a.wb.DisplaysText(a.sheet, p.cellName())
+			// Non-text values (numbers, dates, currency, %, errors) never spill;
+			// they "#"-fill when too narrow and align right when numeric.
+			cr.fill = !text
+			if isNumeric(value) {
+				cr.align = lipgloss.Right
+			}
+			// A text cell may spill its overflow right, but not when it is
+			// merged (Excel clips merged cells) or highlighted (that would drag
+			// the cursor/selection/ref tint across the borrowed cells).
+			cr.spills = text && !inMerge && !highlighted
+		}
+		// A blank cell can absorb a left neighbor's spill only when nothing else
+		// claims it: no highlight and no merge membership, so the spill never
+		// paints over those.
+		cr.receives = value == "" && !highlighted && !inMerge
+		plans[idx] = cr
+	}
+	return plans
 }
 
 func isNumeric(s string) bool {

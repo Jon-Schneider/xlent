@@ -279,6 +279,37 @@ func (w *Workbook) isTextCell(sheet, cell string) bool {
 	return t == excelize.CellTypeSharedString || t == excelize.CellTypeInlineString
 }
 
+// DisplaysText reports whether a cell renders as text rather than a number,
+// date, currency, percentage, boolean, or error. The grid uses this to pick
+// overflow behavior: text spills into blank neighbors, while everything else
+// shows a "#" fill when too narrow — matching Excel, which never spills a
+// non-text value. Number/date/currency/percentage cells carry no stored cell
+// type (xlsx omits the `t` attribute for numeric content), so anything that is
+// not an explicit string — and not a formula whose result reads as text — is
+// treated as non-text.
+func (w *Workbook) DisplaysText(sheet, cellName string) bool {
+	_, cell, err := w.node(sheet, cellName)
+	if err != nil {
+		return false
+	}
+	switch t, _ := w.file.GetCellType(sheet, cell); t {
+	case excelize.CellTypeSharedString, excelize.CellTypeInlineString:
+		return true
+	case excelize.CellTypeFormula:
+		// Formula cells store no value type, so classify by the computed
+		// result: an error literal or a value that parses as a number is not
+		// text (it should hash-fill), everything else is.
+		v := strings.TrimSpace(w.DisplayValue(sheet, cellName))
+		if strings.HasPrefix(v, "#") {
+			return false
+		}
+		_, numeric := parseNumber(v)
+		return !numeric
+	default:
+		return false
+	}
+}
+
 // needsQuoteGuard reports whether text content would be misinterpreted if
 // typed back verbatim (as a number, formula, or quote prefix) and therefore
 // needs a protective leading apostrophe in RawContent.

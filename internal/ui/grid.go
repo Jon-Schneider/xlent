@@ -108,7 +108,6 @@ type cellPlan struct {
 	fill     bool // non-text value; shows a "#" fill when too narrow
 	spills   bool // spillable text source (blockers: not a number/error/merge/highlight)
 	receives bool // blank & unclaimed; may absorb a spill from the left
-	editor   bool // active in-cell editor; never spills or fills
 	skip     bool // horizontally merge-covered; emits nothing
 	consumed bool // absorbed by a spill from the left; emits nothing
 }
@@ -421,7 +420,6 @@ func (a *App) planRow(layout gridLayout, row int, rc rowContext) []cellPlan {
 		// real terminal cursor (placed by placeCursor), so no reverse-video
 		// style here. The editor never spills or receives spill.
 		if a.editor.active && rc.onEditSheet && p == a.cursor {
-			cr.editor = true
 			cr.value, _ = a.editor.window(cr.w - 2*cellPadding)
 			plans[idx] = cr
 			continue

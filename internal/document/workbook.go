@@ -358,7 +358,10 @@ func (w *Workbook) DisplaysText(sheet, cellName string) bool {
 	if err != nil {
 		return false
 	}
-	if isErrorLiteral(strings.TrimSpace(w.DisplayValue(sheet, cellName))) {
+	// Formula error results are exact literals, so no trimming is needed — and
+	// avoiding it keeps this consistent with the UI's untrimmed error styling,
+	// so a padded text value like " #DIV/0! " is treated as text by both.
+	if isErrorLiteral(w.DisplayValue(sheet, cellName)) {
 		return false
 	}
 	style := w.CellStyleAt(sheet, cellName)

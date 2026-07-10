@@ -8,6 +8,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/xuri/excelize/v2"
 )
 
 type failedFileWriteOperation struct {
@@ -58,6 +60,79 @@ func TestXlsxSaveAndLoadRoundTrip(t *testing.T) {
 	}
 	if got := loaded.DisplayValue(sheet, "B1"); got != "label" {
 		t.Errorf("loaded B1 = %q, want label", got)
+	}
+}
+
+func TestOpenOptionsSatisfyExcelizeInvariant(t *testing.T) {
+	// excelize rejects every open with ErrOptionsUnzipSizeLimit when the
+	// per-XML limit exceeds the aggregate limit, so a future edit that inverts
+	// the constants would silently break all file opening. Guard the invariant.
+	opts := openOptions()
+	if opts.UnzipSizeLimit <= 0 || opts.UnzipXMLSizeLimit <= 0 {
+		t.Fatalf("limits must be positive: got aggregate=%d xml=%d",
+			opts.UnzipSizeLimit, opts.UnzipXMLSizeLimit)
+	}
+	if opts.UnzipXMLSizeLimit > opts.UnzipSizeLimit {
+		t.Errorf("per-XML limit %d exceeds aggregate limit %d; excelize would reject every open",
+			opts.UnzipXMLSizeLimit, opts.UnzipSizeLimit)
+	}
+	if opts.UnzipSizeLimit != maxUncompressedWorkbookBytes {
+		t.Errorf("aggregate limit = %d, want %d", opts.UnzipSizeLimit, maxUncompressedWorkbookBytes)
+	}
+	// The per-XML limit is deliberately pinned to excelize's own default so this
+	// change doesn't raise peak memory. If a library bump moved the default, the
+	// "no memory regression" rationale in the constant's comment would go stale —
+	// fail here so it's re-decided consciously rather than drifting.
+	if maxWorksheetXMLBytes != excelize.StreamChunkSize {
+		t.Errorf("per-XML limit = %d, want excelize.StreamChunkSize = %d",
+			maxWorksheetXMLBytes, excelize.StreamChunkSize)
+	}
+}
+
+func TestOpenWorkbookFileRejectsOversizedWorkbook(t *testing.T) {
+	// Real end-to-end enforcement: save an actual (tiny) xlsx, then reopen it
+	// under a 1-byte aggregate limit so excelize's genuine size check trips.
+	// This exercises the whole path and — crucially — pins the assumption that
+	// excelize's limit error still contains the text describeOpenError matches.
+	// If a future excelize reworded that error, this fails here instead of
+	// silently disabling the friendlier message in production.
+	path := filepath.Join(t.TempDir(), "book.xlsx")
+	w := New()
+	mustSetCell(t, w, w.Sheets()[0], "A1", "1")
+	if err := w.SaveAs(path); err != nil {
+		t.Fatalf("SaveAs: %v", err)
+	}
+	w.Close()
+
+	_, err := openWorkbookFile(path, excelize.Options{UnzipSizeLimit: 1, UnzipXMLSizeLimit: 1})
+	if err == nil {
+		t.Fatal("expected openWorkbookFile to reject a workbook over the size limit")
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("error %q should name the rejected file", err)
+	}
+	if !strings.Contains(err.Error(), "uncompressed size limit") {
+		t.Errorf("error %q should carry the friendly size-limit message", err)
+	}
+
+	// A workbook comfortably under the limit still opens.
+	f, err := openWorkbookFile(path, openOptions())
+	if err != nil {
+		t.Fatalf("openWorkbookFile under normal limits: %v", err)
+	}
+	f.Close()
+}
+
+func TestDescribeOpenErrorPassesThroughNonLimitErrors(t *testing.T) {
+	// Any failure that is not the size-limit case must pass through untouched so
+	// its existing context (excelize already names the path on a corrupt file)
+	// is not doubled up.
+	other := errors.New("zip: not a valid zip file")
+	if got := describeOpenError("/tmp/x.xlsx", maxUncompressedWorkbookBytes, other); got != other {
+		t.Errorf("non-limit error should pass through unchanged, got %v", got)
+	}
+	if describeOpenError("/tmp/x.xlsx", maxUncompressedWorkbookBytes, nil) != nil {
+		t.Error("nil error must stay nil")
 	}
 }
 

@@ -29,7 +29,10 @@ func (w *Workbook) Snapshot() ([]byte, error) {
 // snapshot. The file path and CSV-ness survive (they describe where the
 // document lives, not what's in it); all derived state is rebuilt.
 func (w *Workbook) RestoreSnapshot(data []byte) error {
-	f, err := excelize.OpenReader(bytes.NewReader(data))
+	// A snapshot is our own trusted output, so it cannot realistically exceed
+	// these limits; applying them anyway keeps every excelize open site bounded
+	// by the same policy.
+	f, err := excelize.OpenReader(bytes.NewReader(data), openOptions())
 	if err != nil {
 		return fmt.Errorf("restore snapshot: %w", err)
 	}

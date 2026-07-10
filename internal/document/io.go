@@ -17,6 +17,81 @@ import (
 // the UI responds by prompting for a path (save-as).
 var ErrNoPath = errors.New("workbook has no file path")
 
+const (
+	// maxUncompressedWorkbookBytes caps the sum of the *declared* uncompressed
+	// sizes of a workbook's ZIP entries. Important caveat: excelize enforces
+	// this against the sizes recorded in the ZIP central directory
+	// (v.FileInfo().Size() in its ReadZipReader), NOT the bytes it actually
+	// inflates — and excelize discards the decompressor's read error (a size/CRC
+	// mismatch only surfaces on Close, after the bytes are already in memory). So
+	// this stops a classic honest-header zip bomb such as 42.zip, which truthfully
+	// declares a colossal uncompressed size, but it does NOT stop an entry that
+	// lies about its size in the header. Defending against a lying header would
+	// require intercepting excelize's decompression, which the library does not
+	// expose; that residual risk is accepted here. excelize's own default cap is
+	// ~15.6 GiB (excelize.UnzipSizeLimit), high enough that a naive bomb exhausts
+	// memory or temp before it trips; 512 MiB comfortably exceeds any workbook a
+	// person edits by hand while rejecting such a file fast with a clear error.
+	maxUncompressedWorkbookBytes = 512 << 20 // 512 MiB
+
+	// maxWorksheetXMLBytes is the declared size above which excelize streams a
+	// worksheet or shared-string XML part to a temp file instead of holding it
+	// in memory. It is a memory-vs-temp trade-off per part, not a security
+	// boundary — the aggregate cap above is what bounds total footprint. We pin
+	// it to excelize's own default (excelize.StreamChunkSize, 16 MiB) so this
+	// change does not raise peak memory relative to the library's behavior;
+	// passing it explicitly just keeps the value visible alongside the cap it
+	// must not exceed.
+	// TestOpenOptionsSatisfyExcelizeInvariant pins this to excelize.StreamChunkSize
+	// so a library bump can't silently make the "no memory regression" claim false.
+	maxWorksheetXMLBytes = 16 << 20 // 16 MiB, == excelize.StreamChunkSize
+)
+
+// openOptions returns the excelize options applied at every workbook open site
+// so that opening an untrusted file fails fast instead of inflating an
+// oversized ZIP. See the limit constants above for the exact guarantee (and its
+// caveat around attacker-declared sizes).
+func openOptions() excelize.Options {
+	return excelize.Options{
+		UnzipSizeLimit:    maxUncompressedWorkbookBytes,
+		UnzipXMLSizeLimit: maxWorksheetXMLBytes,
+	}
+}
+
+// openWorkbookFile opens an xlsx-family file under the given resource limits,
+// translating excelize's terse limit error via describeOpenError. Load calls it
+// with openOptions(); tests call it with a tiny limit to exercise the real
+// enforcement path against a small fixture (there is no other seam to inject a
+// limit, since Load takes only a path).
+func openWorkbookFile(path string, options excelize.Options) (*excelize.File, error) {
+	f, err := excelize.OpenFile(path, options)
+	if err != nil {
+		return nil, describeOpenError(path, options.UnzipSizeLimit, err)
+	}
+	return f, nil
+}
+
+// describeOpenError turns excelize's terse aggregate-size-limit failure into a
+// message a person can act on. When a workbook exceeds maxUncompressedWorkbookBytes,
+// excelize returns a bare "unzip size exceeds the N bytes limit" that names
+// neither the file nor the reason it was rejected; everything else (a genuinely
+// corrupt file, say) already carries enough context and is returned unchanged.
+// (Exceeding the per-XML limit is not an error — excelize just spills to temp —
+// so this only ever fires for the aggregate cap.) The match is on message text
+// because excelize builds this error inline rather than exporting a sentinel to
+// compare against; the enforcement test pins that wording so a library reword
+// fails the build instead of silently disabling the friendlier message. The
+// reported limit is derived from unzipSizeLimit (the value the caller requested,
+// which every production caller sets non-zero) rather than the package constant,
+// so the message never contradicts the cap in force.
+func describeOpenError(path string, unzipSizeLimit int64, err error) error {
+	if err != nil && strings.Contains(err.Error(), "unzip size exceeds") {
+		return fmt.Errorf("%s exceeds the %d MiB uncompressed size limit for opening a workbook safely: %w",
+			path, unzipSizeLimit>>20, err)
+	}
+	return err
+}
+
 // fileWriteOperation serializes a workbook to the supplied file path.
 // writeAtomically supplies a temporary path in the destination directory.
 type fileWriteOperation interface {
@@ -45,9 +120,8 @@ func (o csvWorkbookWriteOperation) Write(path string) error {
 func Load(path string) (*Workbook, error) {
 	switch ext := strings.ToLower(filepath.Ext(path)); ext {
 	case ".xlsx", ".xlsm", ".xltm", ".xltx":
-		f, err := excelize.OpenFile(path)
+		f, err := openWorkbookFile(path, openOptions())
 		if err != nil {
-			// excelize's error already names the path.
 			return nil, err
 		}
 		w := newWorkbook(f)

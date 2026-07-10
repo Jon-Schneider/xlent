@@ -156,6 +156,11 @@ func (w *Workbook) Save() error {
 // saving a CSV-opened workbook as .xlsx (and vice versa) just works. On
 // success the workbook adopts path as its home and is no longer dirty.
 func (w *Workbook) SaveAs(path string) error {
+	destinationPath, err := resolveSavePath(path)
+	if err != nil {
+		return fmt.Errorf("resolve save destination %s: %w", path, err)
+	}
+
 	var operation fileWriteOperation
 	var isCSV bool
 
@@ -173,7 +178,7 @@ func (w *Workbook) SaveAs(path string) error {
 	default:
 		return fmt.Errorf("unsupported file type %q (expected .xlsx, .xlsm, .xltm, .xltx, or .csv)", ext)
 	}
-	if err := writeAtomically(path, operation); err != nil {
+	if err := writeAtomically(destinationPath, operation); err != nil {
 		return fmt.Errorf("save %s: %w", path, err)
 	}
 
@@ -192,9 +197,7 @@ func writeAtomically(path string, operation fileWriteOperation) error {
 		return err
 	}
 
-	base := filepath.Base(path)
-	extension := filepath.Ext(base)
-	temporaryFile, err := os.CreateTemp(filepath.Dir(path), "."+strings.TrimSuffix(base, extension)+"-*"+extension)
+	temporaryFile, err := createTemporarySaveFile(filepath.Dir(path), filepath.Base(path))
 	if err != nil {
 		return fmt.Errorf("create temporary file: %w", err)
 	}
@@ -205,21 +208,43 @@ func writeAtomically(path string, operation fileWriteOperation) error {
 	}
 	defer os.Remove(temporaryPath)
 
-	if destinationExists {
-		if err := os.Chmod(temporaryPath, mode); err != nil {
-			return fmt.Errorf("set temporary file permissions: %w", err)
-		}
-	}
 	if err := operation.Write(temporaryPath); err != nil {
 		return err
 	}
-	if err := syncFile(temporaryPath); err != nil {
+	if err := preserveDestinationPermissions(temporaryPath, path, destinationExists); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("replace destination: %w", err)
+	if err := syncFile(temporaryPath, mode, destinationExists); err != nil {
+		return err
+	}
+	if err := replaceDestination(temporaryPath, path, destinationExists); err != nil {
+		return err
+	}
+	if err := syncParentDirectory(path); err != nil {
+		return err
 	}
 	return nil
+}
+
+func createTemporarySaveFile(directory, filename string) (*os.File, error) {
+	extension := filepath.Ext(filename)
+	temporaryFile, err := os.CreateTemp(directory, "."+strings.TrimSuffix(filename, extension)+"-*"+extension)
+	if err != nil {
+		return nil, err
+	}
+	temporaryPath := temporaryFile.Name()
+	if err := temporaryFile.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return nil, err
+	}
+	if err := os.Remove(temporaryPath); err != nil {
+		return nil, err
+	}
+
+	// CreateTemp uses 0600 regardless of the caller's umask. Recreating its
+	// randomized path with O_EXCL retains the normal 0666-and-umask mode for a
+	// new destination; a racing creator makes this operation fail safely.
+	return os.OpenFile(temporaryPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o666)
 }
 
 func destinationPermissions(path string) (os.FileMode, bool, error) {
@@ -233,10 +258,16 @@ func destinationPermissions(path string) (os.FileMode, bool, error) {
 	return info.Mode().Perm(), true, nil
 }
 
-func syncFile(path string) error {
-	f, err := os.Open(path)
+func syncFile(path string, mode os.FileMode, preserveMode bool) error {
+	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
 		return fmt.Errorf("open temporary file for sync: %w", err)
+	}
+	if preserveMode {
+		if err := f.Chmod(mode); err != nil {
+			_ = f.Close()
+			return fmt.Errorf("set temporary file permissions: %w", err)
+		}
 	}
 	if err := f.Sync(); err != nil {
 		_ = f.Close()
@@ -246,6 +277,35 @@ func syncFile(path string) error {
 		return fmt.Errorf("close temporary file after sync: %w", err)
 	}
 	return nil
+}
+
+// resolveSavePath follows an existing final symbolic link. Save must update
+// the workbook behind the link rather than replacing the link itself.
+func resolveSavePath(path string) (string, error) {
+	const maximumSymlinkDepth = 255
+	for range maximumSymlinkDepth {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(target) {
+			path = filepath.Join(filepath.Dir(path), target)
+		} else {
+			path = target
+		}
+	}
+	return "", fmt.Errorf("too many symbolic links")
 }
 
 // writeCSV writes the first sheet's computed values — formulas are evaluated,

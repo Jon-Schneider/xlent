@@ -2,8 +2,10 @@ package document
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -220,16 +222,62 @@ func TestSaveAsConvertsCsvWorkbookToXlsx(t *testing.T) {
 }
 
 func TestSaveAsPreservesExistingFilePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
+
+	for _, permissions := range []os.FileMode{0o640, 0} {
+		for _, extension := range []string{".xlsx", ".csv"} {
+			t.Run(extension+"-"+permissions.String(), func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "book"+extension)
+				if err := os.WriteFile(path, []byte("old contents"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, permissions); err != nil {
+					t.Fatal(err)
+				}
+
+				workbook := New()
+				defer workbook.Close()
+				mustSetCell(t, workbook, workbook.Sheets()[0], "A1", "new contents")
+				if err := workbook.SaveAs(path); err != nil {
+					t.Fatalf("SaveAs: %v", err)
+				}
+
+				info, err := os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := info.Mode().Perm(); got != permissions {
+					t.Errorf("permissions = %04o, want %04o", got, permissions)
+				}
+			})
+		}
+	}
+}
+
+func TestSaveAsUsesDefaultPermissionsForNewFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX file permissions")
+	}
+
+	directory := t.TempDir()
+	probePath := filepath.Join(directory, "permission-probe")
+	probe, err := os.OpenFile(probePath, os.O_CREATE|os.O_EXCL, 0o666)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	probeInfo, err := os.Stat(probePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	for _, extension := range []string{".xlsx", ".csv"} {
 		t.Run(extension, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "book"+extension)
-			if err := os.WriteFile(path, []byte("old contents"), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.Chmod(path, 0o640); err != nil {
-				t.Fatal(err)
-			}
-
+			path := filepath.Join(directory, "book"+extension)
 			workbook := New()
 			defer workbook.Close()
 			mustSetCell(t, workbook, workbook.Sheets()[0], "A1", "new contents")
@@ -241,9 +289,79 @@ func TestSaveAsPreservesExistingFilePermissions(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := info.Mode().Perm(); got != 0o640 {
-				t.Errorf("permissions = %04o, want 0640", got)
+			if got, want := info.Mode().Perm(), probeInfo.Mode().Perm(); got != want {
+				t.Errorf("permissions = %04o, want default %04o", got, want)
 			}
+		})
+	}
+}
+
+func TestSaveAsFollowsSymbolicLinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symbolic links requires additional Windows privileges")
+	}
+
+	for _, targetExists := range []bool{true, false} {
+		t.Run(fmt.Sprintf("target exists=%t", targetExists), func(t *testing.T) {
+			directory := t.TempDir()
+			targetPath := filepath.Join(directory, "book.csv")
+			if targetExists {
+				if err := os.WriteFile(targetPath, []byte("old contents\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			linkPath := filepath.Join(directory, "alias.csv")
+			if err := os.Symlink(filepath.Base(targetPath), linkPath); err != nil {
+				t.Fatal(err)
+			}
+
+			workbook := New()
+			defer workbook.Close()
+			mustSetCell(t, workbook, workbook.Sheets()[0], "A1", "new contents")
+			if err := workbook.SaveAs(linkPath); err != nil {
+				t.Fatalf("SaveAs: %v", err)
+			}
+
+			linkInfo, err := os.Lstat(linkPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if linkInfo.Mode()&os.ModeSymlink == 0 {
+				t.Error("SaveAs replaced the symbolic link")
+			}
+			contents, err := os.ReadFile(targetPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.TrimSpace(string(contents)); got != "new contents" {
+				t.Errorf("target contents = %q, want new contents", got)
+			}
+		})
+	}
+}
+
+func TestSaveAsLeavesWorkbookUnchangedWhenReplacementFails(t *testing.T) {
+	for _, extension := range []string{".xlsx", ".csv"} {
+		t.Run(extension, func(t *testing.T) {
+			directory := t.TempDir()
+			path := filepath.Join(directory, "book"+extension)
+			if err := os.Mkdir(path, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			workbook := New()
+			defer workbook.Close()
+			mustSetCell(t, workbook, workbook.Sheets()[0], "A1", "new contents")
+			if err := workbook.SaveAs(path); err == nil {
+				t.Fatal("SaveAs succeeded when replacing a directory")
+			}
+			if !workbook.Dirty() {
+				t.Error("workbook became clean after a failed save")
+			}
+			if workbook.Path() != "" {
+				t.Errorf("Path() = %q, want empty after a failed save", workbook.Path())
+			}
+			assertNoTemporarySaveFiles(t, directory, filepath.Base(path))
 		})
 	}
 }

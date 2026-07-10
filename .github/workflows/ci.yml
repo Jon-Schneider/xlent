@@ -29,6 +29,12 @@ jobs:
       - name: Build
         run: go build -trimpath -o xlent ./cmd/xlent
 
+      - name: Validate release config
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
+        with:
+          version: "2.17.0"
+          args: check
+
   windows-test:
     runs-on: windows-latest
     steps:

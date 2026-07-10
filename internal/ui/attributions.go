@@ -66,14 +66,22 @@ var thirdPartyAttributions = []attribution{
 	{"gopkg.in/yaml.v3", "MIT AND Apache-2.0", "Copyright (c) 2006-2011 Kirill Simonov\nCopyright (c) 2011-2019 Canonical Ltd"},
 }
 
+// licenseIDs splits an SPDX-style license expression (e.g. "MIT",
+// "BSD-3-Clause OR MIT", "MIT AND Apache-2.0") into the individual identifiers,
+// each of which names a file in licenses/. It is the single source of truth for
+// how licenseText and ValidateAttributions interpret the licenseID field.
+func licenseIDs(expr string) []string {
+	normalized := strings.NewReplacer(" OR ", "|", " AND ", "|").Replace(expr)
+	return strings.Split(normalized, "|")
+}
+
 // licenseText returns the full license for an entry, with the per-module
 // copyright spliced into the embedded template. Modules that distribute code
 // under more than one license show each full license. Missing files degrade to
 // a short note rather than panicking.
 func (a attribution) licenseText() string {
-	licenseIDs := strings.NewReplacer(" OR ", "|", " AND ", "|").Replace(a.licenseID)
 	var texts []string
-	for _, licenseID := range strings.Split(licenseIDs, "|") {
+	for _, licenseID := range licenseIDs(a.licenseID) {
 		raw, err := licenseFS.ReadFile("licenses/" + licenseID + ".txt")
 		if err != nil {
 			texts = append(texts, a.copyright+"\n\nLicensed under "+licenseID+".")

@@ -1,0 +1,71 @@
+# GoReleaser configuration for xlent (XL-11: cross-platform release binaries).
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: xlent
+
+before:
+  hooks:
+    # Enforce the attribution invariants in the release path itself, so a local
+    # `goreleaser release` (which bypasses `go test ./...`) still refuses to ship
+    # a NOTICES file that is missing a dependency or has an unresolved license.
+    - go test ./internal/ui -run "TestAttributionsMatchModuleGraph|TestValidateAttributionsResolves"
+    # Regenerate the bundled third-party notices from the app's own attribution
+    # data so every archive ships an up-to-date NOTICES file.
+    - go run ./cmd/gen-notices THIRD_PARTY_NOTICES.txt
+
+builds:
+  - id: xlent
+    main: ./cmd/xlent
+    binary: xlent
+    env:
+      # Pure-Go build; disabling cgo keeps cross-compilation hermetic.
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      # Inject the release version so `xlent --version` reports the tag including
+      # its leading "v" (versionString then appends the VCS revision, e.g.
+      # "xlent v1.2.3 (abc1234)").
+      - -s -w -X main.version={{ .Tag }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: xlent
+    ids:
+      - xlent
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - THIRD_PARTY_NOTICES.txt
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  draft: true
+  prerelease: auto

@@ -1,6 +1,7 @@
 *.xlsx
 /xlent
 /dist/
+/THIRD_PARTY_NOTICES.txt
 *.test
 *.out
 .DS_Store

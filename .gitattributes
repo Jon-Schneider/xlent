@@ -1,0 +1,9 @@
+# Keep these assets LF on every platform, including Windows checkouts with
+# core.autocrlf=true and the windows-test CI job.
+#
+# - The license texts are embedded verbatim via go:embed and spliced into the
+#   generated THIRD_PARTY_NOTICES artifact; CRLF here would leak into that output.
+# - notices.golden is compared byte-for-byte by TestThirdPartyNoticesGolden, so
+#   any line-ending drift would fail the test spuriously.
+internal/ui/licenses/*.txt text eol=lf
+internal/ui/testdata/*.golden text eol=lf

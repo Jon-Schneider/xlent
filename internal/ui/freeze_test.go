@@ -47,3 +47,35 @@ func TestFreezePanesPinsLeadingColumns(t *testing.T) {
 		t.Errorf("cols head = %v, want column 1 pinned on the left", layout.cols)
 	}
 }
+
+func TestFreezeAndUnfreezePanesAreUndoable(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	app.setCursor(position{Col: 2, Row: 3}, false)
+	app.freezePanes()
+	if rows, cols := wb.Freeze(app.sheet); rows != 2 || cols != 1 {
+		t.Fatalf("Freeze() = (%d,%d), want (2,1)", rows, cols)
+	}
+
+	app.undo()
+	if rows, cols := wb.Freeze(app.sheet); rows != 0 || cols != 0 {
+		t.Errorf("Freeze() after undo = (%d,%d), want (0,0)", rows, cols)
+	}
+	app.redo()
+	if rows, cols := wb.Freeze(app.sheet); rows != 2 || cols != 1 {
+		t.Errorf("Freeze() after redo = (%d,%d), want (2,1)", rows, cols)
+	}
+
+	app.unfreezePanes()
+	if rows, cols := wb.Freeze(app.sheet); rows != 0 || cols != 0 {
+		t.Fatalf("Freeze() after unfreeze = (%d,%d), want (0,0)", rows, cols)
+	}
+	app.undo()
+	if rows, cols := wb.Freeze(app.sheet); rows != 2 || cols != 1 {
+		t.Errorf("Freeze() after undoing unfreeze = (%d,%d), want (2,1)", rows, cols)
+	}
+	app.redo()
+	if rows, cols := wb.Freeze(app.sheet); rows != 0 || cols != 0 {
+		t.Errorf("Freeze() after redoing unfreeze = (%d,%d), want (0,0)", rows, cols)
+	}
+}

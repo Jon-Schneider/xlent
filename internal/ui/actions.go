@@ -432,10 +432,10 @@ func (a *App) pasteExternal(text string) {
 	a.undoStack.Record(undo.Command{Label: "Paste", Edits: edits})
 }
 
-// structuralOp runs a workbook-reshaping operation bracketed by snapshots so
-// it can be undone wholesale (cell-edit replay can't reverse structure
-// changes). A failed operation restores the before-snapshot rather than
-// leaving the workbook half-modified.
+// structuralOp runs an operation bracketed by snapshots so it can be undone
+// wholesale when cell-edit replay cannot restore its effects, including
+// workbook metadata such as panes. A failed operation restores the
+// before-snapshot rather than leaving the workbook half-modified.
 func (a *App) structuralOp(label string, op func() error) bool {
 	before, err := a.wb.Snapshot()
 	if err != nil {
@@ -826,16 +826,14 @@ func (a *App) nextTableName() string {
 }
 
 // freezePanes freezes the rows above and columns left of the active cell,
-// Excel-style. It's a view/layout property (like column widths), so it isn't
-// undoable; it does round-trip through save.
+// Excel-style.
 func (a *App) freezePanes() {
 	rows, cols := a.cursor.Row-1, a.cursor.Col-1
 	if rows == 0 && cols == 0 {
 		a.statusMsg = "Move below and right of the rows/columns to freeze first"
 		return
 	}
-	if err := a.wb.SetFreeze(a.sheet, rows, cols); err != nil {
-		a.statusMsg = err.Error()
+	if !a.structuralOp("Freeze Panes", func() error { return a.wb.SetFreeze(a.sheet, rows, cols) }) {
 		return
 	}
 	a.topRow = max(a.topRow, rows+1)
@@ -845,8 +843,12 @@ func (a *App) freezePanes() {
 
 // unfreezePanes clears any frozen panes on the active sheet.
 func (a *App) unfreezePanes() {
-	if err := a.wb.SetFreeze(a.sheet, 0, 0); err != nil {
-		a.statusMsg = err.Error()
+	rows, cols := a.wb.Freeze(a.sheet)
+	if rows == 0 && cols == 0 {
+		a.statusMsg = "No panes are frozen"
+		return
+	}
+	if !a.structuralOp("Unfreeze Panes", func() error { return a.wb.SetFreeze(a.sheet, 0, 0) }) {
 		return
 	}
 	a.statusMsg = "Unfroze panes"

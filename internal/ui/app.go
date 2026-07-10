@@ -181,7 +181,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case tea.MouseReleaseMsg:
-		a.colResize = colResize{}
+		a.finishColumnResize()
 
 	case tea.MouseWheelMsg:
 		if a.attributions.open {
@@ -194,12 +194,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // colResize is the state of a column-width drag: which column, where the
-// drag started, and the width it started from.
+// drag started, the width it started from, and its pre-drag snapshot.
 type colResize struct {
-	active bool
-	col    int
-	startX int
-	startW int
+	active         bool
+	col            int
+	startX         int
+	startW         int
+	beforeSnapshot []byte
 }
 
 // startColResizeAt begins a width drag when x sits on a visible column's
@@ -209,7 +210,18 @@ func (a *App) startColResizeAt(x int) bool {
 	for i, c := range a.layout.cols {
 		edge := a.layout.colX[i] + a.colWidth(c) - 1
 		if x >= edge-1 && x <= edge+1 {
-			a.colResize = colResize{active: true, col: c, startX: x, startW: a.colWidth(c)}
+			before, err := a.wb.Snapshot()
+			if err != nil {
+				a.statusMsg = err.Error()
+				return false
+			}
+			a.colResize = colResize{
+				active:         true,
+				col:            c,
+				startX:         x,
+				startW:         a.colWidth(c),
+				beforeSnapshot: before,
+			}
 			return true
 		}
 	}
@@ -217,13 +229,36 @@ func (a *App) startColResizeAt(x int) bool {
 }
 
 // dragColumnWidth applies the width implied by the pointer's travel since
-// the drag started. Widths persist into the file (no undo — acceptable for
-// a layout property).
+// the drag started. finishColumnResize records the whole drag as one
+// snapshot-based undo command.
 func (a *App) dragColumnWidth(x int) {
 	want := a.colResize.startW + (x - a.colResize.startX)
+	if a.wb.ColWidth(a.sheet, a.colResize.col, defaultColWidth) == clamp(want, 4, 40) {
+		return
+	}
 	if err := a.wb.SetColWidth(a.sheet, a.colResize.col, want); err != nil {
 		a.statusMsg = err.Error()
 	}
+}
+
+// finishColumnResize records a changed drag as one command. Snapshot undo is
+// necessary because a column's width is workbook metadata, not cell content.
+func (a *App) finishColumnResize() {
+	resize := a.colResize
+	a.colResize = colResize{}
+	if !resize.active || a.wb.ColWidth(a.sheet, resize.col, defaultColWidth) == resize.startW {
+		return
+	}
+	after, err := a.wb.Snapshot()
+	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	a.undoStack.Record(undo.Command{
+		Label:          "Resize Column",
+		BeforeSnapshot: resize.beforeSnapshot,
+		AfterSnapshot:  after,
+	})
 }
 
 // handleEditingKey processes keys while the in-cell editor is open.

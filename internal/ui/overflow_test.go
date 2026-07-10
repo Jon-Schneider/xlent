@@ -180,13 +180,73 @@ func TestCurrencyDoesNotSpill(t *testing.T) {
 	}
 }
 
-func TestErrorValueDoesNotSpill(t *testing.T) {
+// An error too narrow for its cell hash-fills and never spills, even into a
+// blank neighbor. The column is narrowed so the 7-char "#DIV/0!" actually
+// overflows (otherwise the test would pass vacuously).
+func TestErrorValueHashFillsAndDoesNotSpill(t *testing.T) {
 	app := buildApp(t)
-	set(t, app, "A3", "=1/0")
-	set(t, app, "B3", "KEEP")
+	if err := app.wb.SetColWidth(app.wb.Sheets()[0], 1, 5); err != nil { // content width 3
+		t.Fatal(err)
+	}
+	set(t, app, "A3", "=1/0") // B3 left blank
 	line := gridRow(t, app, 3)
-	if !strings.Contains(line, "KEEP") {
-		t.Errorf("error value must not spill over B3, got %q", line)
+	if strings.Contains(line, "DIV") {
+		t.Errorf("error must hash-fill / not spill its text, got %q", line)
+	}
+	if !strings.Contains(line, "###") {
+		t.Errorf("expected # fill for overwide error, got %q", line)
+	}
+}
+
+func TestIsErrorValueUsesCanonicalList(t *testing.T) {
+	if isErrorValue("#done!") {
+		t.Error(`"#done!" is ordinary text, must not be treated as an error`)
+	}
+	if !isErrorValue("#REF!") || !isErrorValue("#N/A") {
+		t.Error("real error literals must be recognized")
+	}
+}
+
+// A text ("@") number format renders every value as text, so a number under it
+// spills like text instead of hash-filling.
+func TestNumberUnderTextFormatSpills(t *testing.T) {
+	app := buildApp(t)
+	set(t, app, "A3", "123456789012345")
+	if err := app.wb.SetNumberFormat(app.wb.Sheets()[0], 1, 3, 1, 3, document.FormatText); err != nil {
+		t.Fatal(err)
+	}
+	line := gridRow(t, app, 3)
+	if strings.Contains(line, "#####") {
+		t.Errorf("a value under text format must not hash-fill, got %q", line)
+	}
+	if !strings.Contains(line, "123456789012345") {
+		t.Errorf("text-formatted value should render/spill in full, got %q", line)
+	}
+}
+
+// A formula result under a custom "@" text format must spill as text, not be
+// destroyed into a "#" fill.
+func TestFormulaUnderCustomTextFormatSpills(t *testing.T) {
+	app := buildApp(t)
+	setFormula(t, app, "A3", `="formula text at-format spilling here"`, nil)
+	if err := app.wb.SetNumberFormat(app.wb.Sheets()[0], 1, 3, 1, 3, document.NumberFormat{Custom: "@"}); err != nil {
+		t.Fatal(err)
+	}
+	line := gridRow(t, app, 3)
+	if !strings.Contains(line, "formula text at-format spilling here") {
+		t.Errorf("text under custom @ format should spill in full, got %q", line)
+	}
+}
+
+// A neighbor holding a formula that returns "" is not empty and must block
+// spill, matching Excel (which stops overflow at any cell with content).
+func TestSpillBlockedByEmptyStringFormula(t *testing.T) {
+	app := buildApp(t)
+	set(t, app, "A3", "OverflowingTextValue")
+	set(t, app, "B3", `=""`)
+	line := gridRow(t, app, 3)
+	if strings.Contains(line, "OverflowingTextValue") {
+		t.Errorf(`spill must stop at a cell holding =\"\", got %q`, line)
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Jon-Schneider/xlent/internal/document"
 	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
@@ -476,11 +477,12 @@ func (a *App) planRow(layout gridLayout, row int, rc rowContext) []cellPlan {
 			// the cursor/selection/ref tint across the borrowed cells).
 			cr.spills = text && !inMerge && !highlighted
 		}
-		// A blank cell can absorb a left neighbor's spill only when nothing else
-		// claims it: no highlight and no merge membership, so the spill never
-		// paints over those. (A highlighted blank briefly blocks spill as the
+		// A cell can absorb a left neighbor's spill only when it is genuinely
+		// empty (IsEmpty, so a formula returning "" still blocks like Excel),
+		// unhighlighted, and unmerged — so the spill never paints over content
+		// or a highlight. (A highlighted blank briefly blocks spill as the
 		// cursor passes — an accepted cost of cell-width terminal styling.)
-		cr.receives = value == "" && !highlighted && !inMerge
+		cr.receives = value == "" && !highlighted && !inMerge && a.wb.IsEmpty(a.sheet, p.cellName())
 		plans[idx] = cr
 	}
 	return plans
@@ -494,6 +496,10 @@ func isNumeric(s string) bool {
 	return err == nil
 }
 
+// isErrorValue reports whether a display value is an Excel error literal, using
+// the workbook's canonical list so error styling can't disagree with the
+// overflow classifier (which also treats errors as non-text). Text that merely
+// looks error-shaped (e.g. "#done!") is not styled as an error.
 func isErrorValue(s string) bool {
-	return strings.HasPrefix(s, "#") && strings.HasSuffix(s, "!") || s == "#N/A" || s == "#NAME?"
+	return document.IsErrorLiteral(s)
 }

@@ -294,41 +294,81 @@ func isErrorLiteral(v string) bool {
 	return false
 }
 
+// IsErrorLiteral is the exported form of isErrorLiteral, so the UI classifies
+// error values with the same canonical list rather than its own heuristic.
+func IsErrorLiteral(v string) bool { return isErrorLiteral(v) }
+
+// numFmtCodeIsText reports whether a custom number-format code is a text format,
+// i.e. it contains the '@' text placeholder outside of quoted literals and
+// backslash escapes (e.g. `@`, `@" units"`, `"ID: "@`).
+func numFmtCodeIsText(code string) bool {
+	inQuote := false
+	for i := 0; i < len(code); i++ {
+		switch c := code[i]; {
+		case c == '"':
+			inQuote = !inQuote
+		case c == '\\' && !inQuote:
+			i++ // skip the escaped character
+		case c == '@' && !inQuote:
+			return true
+		}
+	}
+	return false
+}
+
+// styleIsTextFormat reports whether a cell's number format is a text ("@")
+// format, which renders every value — number or string — as text.
+func styleIsTextFormat(s CellStyle) bool {
+	if s.NumFmtCustom != "" {
+		return numFmtCodeIsText(s.NumFmtCustom)
+	}
+	return s.NumFmtID == FormatText.ID
+}
+
 // DisplaysText reports whether a cell renders as text rather than a number,
 // date, currency, percentage, boolean, or error. The grid uses this to pick
 // overflow behavior: text spills into blank neighbors, while everything else
 // shows a "#" fill when too narrow — matching Excel, which never spills a
 // non-text value.
 //
-// excelize reports CellTypeFormula for any cell holding a formula, hiding the
-// cached result type, so formula cells are classified by their result: an
-// error literal or a value shown under a numeric/date number format is
-// non-text. Only under the General or explicit-text formats — where a numeric
-// result renders unformatted — is the result parsed to tell number from text.
-// Plain numbers, dates, currency, and percentages carry no stored cell type
-// (xlsx omits the `t` attribute for numeric content), so any non-string,
-// non-formula cell is treated as non-text.
+// A text ("@") format wins first: under it every value renders as text,
+// whatever its stored type. Otherwise explicit strings are text and plain
+// numbers/dates/currency/percentages (which carry no stored cell type — xlsx
+// omits the `t` attribute for numeric content) are not. excelize reports
+// CellTypeFormula for any formula cell, hiding its cached result type, so a
+// formula is classified by its result: an error literal or a value under a
+// numeric/date format is non-text; only under General — where a number renders
+// unformatted — is the result parsed. That parse cannot distinguish a
+// number-looking string result (e.g. ="123") from a real number, an accepted
+// limitation of excelize returning untyped calc results.
 func (w *Workbook) DisplaysText(sheet, cellName string) bool {
 	_, cell, err := w.node(sheet, cellName)
 	if err != nil {
 		return false
 	}
+	style := w.CellStyleAt(sheet, cellName)
+	if styleIsTextFormat(style) {
+		return true
+	}
 	switch t, _ := w.file.GetCellType(sheet, cell); t {
 	case excelize.CellTypeSharedString, excelize.CellTypeInlineString:
 		return true
 	case excelize.CellTypeFormula:
-		v := strings.TrimSpace(w.DisplayValue(sheet, cellName))
-		if isErrorLiteral(v) {
+		v := w.DisplayValue(sheet, cellName)
+		if isErrorLiteral(strings.TrimSpace(v)) {
 			return false
 		}
-		style := w.CellStyleAt(sheet, cellName)
-		switch {
-		case style.NumFmtCustom != "" || (style.NumFmtID != 0 && style.NumFmtID != FormatText.ID):
-			return false // a numeric / date / currency / percentage format
-		case style.NumFmtID == FormatText.ID:
-			return true // explicit text format
+		// A non-General numeric/date/currency/percentage format (text formats
+		// were handled above) means the result is shown as a number.
+		if style.NumFmtCustom != "" || style.NumFmtID != 0 {
+			return false
 		}
-		// General format: a numeric result renders unformatted, so parse it.
+		// General format: booleans and anything that parses as a number are
+		// non-text. Parse the untrimmed value so surrounding spaces (which a
+		// real number never has) keep a spaced string classified as text.
+		if v == "TRUE" || v == "FALSE" {
+			return false
+		}
 		_, numeric := parseNumber(v)
 		return !numeric
 	default:

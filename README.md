@@ -27,10 +27,24 @@ go build -o xlent ./cmd/xlent     # or: ./build.sh (vet + tests + build)
 ./xlent budget.xlsx            # open a file, or run bare for a blank workbook
 ```
 
-Requires Go 1.25+. A terminal with mouse support is recommended; terminals
-speaking the kitty keyboard protocol additionally get shortcuts like
-`Ctrl+Shift+Arrow` (in others, `F8` toggles extend-selection mode as a
-fallback).
+Requires Go 1.25+.
+
+## Platform and terminal support
+
+`xlent` supports macOS, Linux, and Windows in a modern ANSI-capable terminal.
+Mouse support is recommended.
+
+- **Tier 1 — kitty keyboard protocol:** Ghostty, kitty, iTerm2, WezTerm, and
+  foot expose the full shortcut set, including `Ctrl+Shift+Arrow`.
+- **Tier 2 — legacy terminal protocol:** macOS Terminal.app and other
+  terminals without the kitty protocol cannot distinguish some modified key
+  combinations (for example, `Ctrl+Shift+Arrow` from `Ctrl+Arrow`). `F8`
+  toggles extend-selection mode as a fallback, and all commands remain
+  available from the menu bar.
+
+Terminal capability detection happens automatically at startup. macOS `Cmd`
+shortcuts are consumed by terminal emulators, so `xlent` consistently uses
+Windows-Excel-style `Ctrl` bindings.
 
 ## Features
 

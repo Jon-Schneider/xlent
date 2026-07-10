@@ -21,13 +21,16 @@ type attribution struct {
 	copyright string
 }
 
-// thirdPartyAttributions lists the open-source modules xlent depends on, with
-// the license each is distributed under. Keep this in sync with go.mod when
-// dependencies change; licenseID must match a file in licenses/.
+// thirdPartyAttributions lists every module in xlent's resolved dependency
+// graph, including dependencies used only by tests. Keep this in sync with
+// go.mod when dependencies change; licenseID must match a file in licenses/.
 var thirdPartyAttributions = []attribution{
 	{"charm.land/bubbletea/v2", "MIT", "Copyright (c) Charmbracelet, Inc."},
 	{"charm.land/lipgloss/v2", "MIT", "Copyright (c) Charmbracelet, Inc."},
+	{"github.com/aymanbagabas/go-udiff", "BSD-3-Clause OR MIT", "Copyright (c) 2009 The Go Authors\nCopyright (c) 2023 Ayman Bagabas"},
+	{"github.com/bits-and-blooms/bitset", "BSD-3-Clause", "Copyright (c) 2014 Will Fitzgerald"},
 	{"github.com/charmbracelet/x/ansi", "MIT", "Copyright (c) Charmbracelet, Inc."},
+	{"github.com/charmbracelet/x/exp/golden", "MIT", "Copyright (c) Charmbracelet, Inc."},
 	{"github.com/charmbracelet/x/term", "MIT", "Copyright (c) Charmbracelet, Inc."},
 	{"github.com/charmbracelet/x/termios", "MIT", "Copyright (c) Charmbracelet, Inc."},
 	{"github.com/charmbracelet/x/windows", "MIT", "Copyright (c) Charmbracelet, Inc."},
@@ -37,31 +40,48 @@ var thirdPartyAttributions = []attribution{
 	{"github.com/xuri/efp", "BSD-3-Clause", "Copyright (c) 2017-2024 xuri"},
 	{"github.com/xuri/nfp", "BSD-3-Clause", "Copyright (c) 2021-2024 xuri"},
 	{"github.com/clipperhouse/displaywidth", "MIT", "Copyright (c) Clipperhouse"},
+	{"github.com/clipperhouse/stringish", "MIT", "Copyright (c) Matt Sherman"},
 	{"github.com/clipperhouse/uax29/v2", "MIT", "Copyright (c) Clipperhouse"},
+	{"github.com/davecgh/go-spew", "ISC", "Copyright (c) 2012-2016 Dave Collins <dave@davec.name>"},
 	{"github.com/lucasb-eyer/go-colorful", "MIT", "Copyright (c) 2013 Lucas Beyer"},
 	{"github.com/mattn/go-runewidth", "MIT", "Copyright (c) 2016 Yasuhiro Matsumoto"},
 	{"github.com/muesli/cancelreader", "MIT", "Copyright (c) 2022 Erik Geiser and Christian Muehlhaeuser"},
+	{"github.com/pmezard/go-difflib", "BSD-3-Clause", "Copyright (c) 2013 Patrick Mezard"},
 	{"github.com/richardlehane/mscfb", "Apache-2.0", "Copyright (c) 2014 Richard Lehane"},
 	{"github.com/richardlehane/msoleps", "Apache-2.0", "Copyright (c) 2015 Richard Lehane"},
 	{"github.com/rivo/uniseg", "MIT", "Copyright (c) 2019 Oliver Kuederle"},
+	{"github.com/stretchr/testify", "MIT", "Copyright (c) 2012-2020 Mat Ryer, Tyler Bunnell and contributors"},
 	{"github.com/tiendc/go-deepcopy", "MIT", "Copyright (c) 2024 Tien Dang"},
 	{"github.com/xo/terminfo", "MIT", "Copyright (c) 2019 Kenneth Shaw"},
 	{"golang.org/x/crypto", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
+	{"golang.org/x/exp", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
+	{"golang.org/x/image", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
+	{"golang.org/x/mod", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
 	{"golang.org/x/net", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
 	{"golang.org/x/sync", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
 	{"golang.org/x/sys", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
+	{"golang.org/x/term", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
 	{"golang.org/x/text", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
+	{"golang.org/x/tools", "BSD-3-Clause", "Copyright (c) 2009 The Go Authors"},
+	{"gopkg.in/yaml.v3", "MIT AND Apache-2.0", "Copyright (c) 2006-2011 Kirill Simonov\nCopyright (c) 2011-2019 Canonical Ltd"},
 }
 
 // licenseText returns the full license for an entry, with the per-module
-// copyright spliced into the embedded template. Missing files degrade to a
-// short note rather than panicking.
+// copyright spliced into the embedded template. Modules that distribute code
+// under more than one license show each full license. Missing files degrade to
+// a short note rather than panicking.
 func (a attribution) licenseText() string {
-	raw, err := licenseFS.ReadFile("licenses/" + a.licenseID + ".txt")
-	if err != nil {
-		return a.copyright + "\n\nLicensed under " + a.licenseID + "."
+	licenseIDs := strings.NewReplacer(" OR ", "|", " AND ", "|").Replace(a.licenseID)
+	var texts []string
+	for _, licenseID := range strings.Split(licenseIDs, "|") {
+		raw, err := licenseFS.ReadFile("licenses/" + licenseID + ".txt")
+		if err != nil {
+			texts = append(texts, a.copyright+"\n\nLicensed under "+licenseID+".")
+			continue
+		}
+		texts = append(texts, strings.ReplaceAll(string(raw), "{{COPYRIGHT}}", a.copyright))
 	}
-	return strings.ReplaceAll(string(raw), "{{COPYRIGHT}}", a.copyright)
+	return strings.Join(texts, "\n\n")
 }
 
 // attributionsOverlay is the Help ▸ Attributions panel state. It has two
@@ -76,12 +96,12 @@ type attributionsOverlay struct {
 	detailScroll int
 
 	// Geometry captured during the last render, for mouse hit-testing.
-	rowY0  int // screen y of the first visible module row
-	rowsN  int // number of module rows currently drawn
-	boxX   int // left edge of the panel box
-	boxW   int // panel box width
-	boxY   int // top edge of the panel box
-	boxH   int // panel box height
+	rowY0 int // screen y of the first visible module row
+	rowsN int // number of module rows currently drawn
+	boxX  int // left edge of the panel box
+	boxW  int // panel box width
+	boxY  int // top edge of the panel box
+	boxH  int // panel box height
 }
 
 func (o *attributionsOverlay) openPanel() {

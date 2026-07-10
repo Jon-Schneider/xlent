@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -135,12 +136,39 @@ func TestAttributionsKeysDoNotLeakToGrid(t *testing.T) {
 
 func TestEveryAttributionHasEmbeddedLicense(t *testing.T) {
 	for _, entry := range thirdPartyAttributions {
+		licenseIDs := strings.NewReplacer(" OR ", "|", " AND ", "|").Replace(entry.licenseID)
+		for _, licenseID := range strings.Split(licenseIDs, "|") {
+			if _, err := licenseFS.ReadFile("licenses/" + licenseID + ".txt"); err != nil {
+				t.Errorf("%s: read %s license: %v", entry.module, licenseID, err)
+			}
+		}
+
 		text := entry.licenseText()
 		if strings.Contains(text, "{{COPYRIGHT}}") {
 			t.Errorf("%s: copyright placeholder not substituted", entry.module)
 		}
 		if !strings.Contains(text, entry.copyright) {
 			t.Errorf("%s: license text missing copyright line", entry.module)
+		}
+	}
+}
+
+func TestAttributionsCoverResolvedModuleGraph(t *testing.T) {
+	result, err := exec.Command("go", "list", "-m", "-f={{.Path}}", "all").Output()
+	if err != nil {
+		t.Fatalf("list resolved modules: %v", err)
+	}
+
+	attributed := make(map[string]struct{}, len(thirdPartyAttributions))
+	for _, entry := range thirdPartyAttributions {
+		attributed[entry.module] = struct{}{}
+	}
+	for _, module := range strings.Fields(string(result)) {
+		if module == "github.com/Jon-Schneider/xlent" {
+			continue
+		}
+		if _, ok := attributed[module]; !ok {
+			t.Errorf("resolved module %q is missing from thirdPartyAttributions", module)
 		}
 	}
 }

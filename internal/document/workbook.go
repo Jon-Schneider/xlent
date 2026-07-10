@@ -298,18 +298,25 @@ func isErrorLiteral(v string) bool {
 // error values with the same canonical list rather than its own heuristic.
 func IsErrorLiteral(v string) bool { return isErrorLiteral(v) }
 
-// numFmtCodeIsText reports whether a custom number-format code is a text format,
-// i.e. it contains the '@' text placeholder outside of quoted literals and
-// backslash escapes (e.g. `@`, `@" units"`, `"ID: "@`).
+// numFmtCodeIsText reports whether a custom number-format code renders numbers
+// as text, i.e. its FIRST section holds the '@' text placeholder. Only the
+// first (positive/number) section governs how a numeric value renders; a
+// trailing text section — as in every accounting format (`…;…;…;_-@_-`) —
+// applies only to string values and must not make numbers count as text. The
+// scan honors quoted literals ("…"), backslash escapes (\@), and the `_`/`*`
+// operators, which each consume the following character. Examples that count:
+// `@`, `@" units"`, `"ID: "@`; examples that do not: `0;-0;0;@`, `\@`, `0_@`.
 func numFmtCodeIsText(code string) bool {
-	inQuote := false
 	for i := 0; i < len(code); i++ {
-		switch c := code[i]; {
-		case c == '"':
-			inQuote = !inQuote
-		case c == '\\' && !inQuote:
-			i++ // skip the escaped character
-		case c == '@' && !inQuote:
+		switch code[i] {
+		case '"':
+			for i++; i < len(code) && code[i] != '"'; i++ {
+			}
+		case '\\', '_', '*':
+			i++ // these consume the following character
+		case ';':
+			return false // reached the end of the first section without '@'
+		case '@':
 			return true
 		}
 	}
@@ -331,19 +338,27 @@ func styleIsTextFormat(s CellStyle) bool {
 // shows a "#" fill when too narrow — matching Excel, which never spills a
 // non-text value.
 //
-// A text ("@") format wins first: under it every value renders as text,
-// whatever its stored type. Otherwise explicit strings are text and plain
-// numbers/dates/currency/percentages (which carry no stored cell type — xlsx
-// omits the `t` attribute for numeric content) are not. excelize reports
-// CellTypeFormula for any formula cell, hiding its cached result type, so a
-// formula is classified by its result: an error literal or a value under a
-// numeric/date format is non-text; only under General — where a number renders
-// unformatted — is the result parsed. That parse cannot distinguish a
-// number-looking string result (e.g. ="123") from a real number, an accepted
-// limitation of excelize returning untyped calc results.
+// Order matters. Errors are checked first: an error literal is never text and
+// never spills, whatever the number format. A text ("@") format wins next:
+// under it every remaining value renders as text, whatever its stored type.
+// Otherwise explicit strings are text and plain numbers/dates/currency/
+// percentages (which carry no stored cell type — xlsx omits the `t` attribute
+// for numeric content) are not.
+//
+// excelize reports CellTypeFormula for any formula cell, hiding its cached
+// result type, so a formula is classified by its result and format: a value
+// under a numeric/date format is taken as a number; only under General — where
+// a number renders unformatted — is the result parsed. Two ambiguities are
+// accepted here because excelize returns untyped calc results: a number-looking
+// string (`="123"`) parses as a number, and a text result under a numeric
+// format is treated as a number — neither is distinguishable without a result
+// type excelize does not expose.
 func (w *Workbook) DisplaysText(sheet, cellName string) bool {
 	_, cell, err := w.node(sheet, cellName)
 	if err != nil {
+		return false
+	}
+	if isErrorLiteral(strings.TrimSpace(w.DisplayValue(sheet, cellName))) {
 		return false
 	}
 	style := w.CellStyleAt(sheet, cellName)
@@ -354,10 +369,6 @@ func (w *Workbook) DisplaysText(sheet, cellName string) bool {
 	case excelize.CellTypeSharedString, excelize.CellTypeInlineString:
 		return true
 	case excelize.CellTypeFormula:
-		v := w.DisplayValue(sheet, cellName)
-		if isErrorLiteral(strings.TrimSpace(v)) {
-			return false
-		}
 		// A non-General numeric/date/currency/percentage format (text formats
 		// were handled above) means the result is shown as a number.
 		if style.NumFmtCustom != "" || style.NumFmtID != 0 {
@@ -366,6 +377,7 @@ func (w *Workbook) DisplaysText(sheet, cellName string) bool {
 		// General format: booleans and anything that parses as a number are
 		// non-text. Parse the untrimmed value so surrounding spaces (which a
 		// real number never has) keep a spaced string classified as text.
+		v := w.DisplayValue(sheet, cellName)
 		if v == "TRUE" || v == "FALSE" {
 			return false
 		}

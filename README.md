@@ -112,3 +112,9 @@ product definition.
 ./build.sh          # go vet + go test ./... + build
 ./build.sh --fast   # build only
 ```
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE). Third-party
+dependencies retain their own licenses; see the in-app Help → Attributions
+screen for the full list.

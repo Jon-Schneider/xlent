@@ -1,11 +1,28 @@
 package document
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type failedFileWriteOperation struct {
+	err error
+}
+
+func (o failedFileWriteOperation) Write(string) error {
+	return o.err
+}
+
+type contentsFileWriteOperation struct {
+	contents []byte
+}
+
+func (o contentsFileWriteOperation) Write(path string) error {
+	return os.WriteFile(path, o.contents, 0o600)
+}
 
 func TestXlsxSaveAndLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "book.xlsx")
@@ -199,5 +216,92 @@ func TestSaveAsConvertsCsvWorkbookToXlsx(t *testing.T) {
 	defer reloaded.Close()
 	if got := reloaded.DisplayValue(reloaded.Sheets()[0], "B1"); got != "2" {
 		t.Errorf("B1 = %q, want 2", got)
+	}
+}
+
+func TestSaveAsPreservesExistingFilePermissions(t *testing.T) {
+	for _, extension := range []string{".xlsx", ".csv"} {
+		t.Run(extension, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "book"+extension)
+			if err := os.WriteFile(path, []byte("old contents"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(path, 0o640); err != nil {
+				t.Fatal(err)
+			}
+
+			workbook := New()
+			defer workbook.Close()
+			mustSetCell(t, workbook, workbook.Sheets()[0], "A1", "new contents")
+			if err := workbook.SaveAs(path); err != nil {
+				t.Fatalf("SaveAs: %v", err)
+			}
+
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := info.Mode().Perm(); got != 0o640 {
+				t.Errorf("permissions = %04o, want 0640", got)
+			}
+		})
+	}
+}
+
+func TestWriteAtomicallyLeavesDestinationUntouchedWhenSerializationFails(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "book.csv")
+	originalContents := []byte("original contents\n")
+	if err := os.WriteFile(path, originalContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	writeErr := errors.New("serialization failed")
+	err := writeAtomically(path, failedFileWriteOperation{err: writeErr})
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("writeAtomically error = %v, want serialization failure", err)
+	}
+
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(contents); got != string(originalContents) {
+		t.Errorf("destination contents = %q, want %q", got, originalContents)
+	}
+	assertNoTemporarySaveFiles(t, directory, "book.csv")
+}
+
+func TestWriteAtomicallyRemovesTemporaryFileWhenReplacementFails(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "book.csv")
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := writeAtomically(path, contentsFileWriteOperation{contents: []byte("new contents\n")})
+	if err == nil {
+		t.Fatal("writeAtomically succeeded when replacing a directory")
+	}
+
+	info, statErr := os.Stat(path)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if !info.IsDir() {
+		t.Error("destination directory was replaced")
+	}
+	assertNoTemporarySaveFiles(t, directory, "book.csv")
+}
+
+func assertNoTemporarySaveFiles(t *testing.T, directory, filename string) {
+	t.Helper()
+	base := strings.TrimSuffix(filename, filepath.Ext(filename))
+	matches, err := filepath.Glob(filepath.Join(directory, "."+base+"-*"+filepath.Ext(filename)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 0 {
+		t.Errorf("temporary save files remain: %v", matches)
 	}
 }

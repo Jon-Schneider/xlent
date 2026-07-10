@@ -17,6 +17,28 @@ import (
 // the UI responds by prompting for a path (save-as).
 var ErrNoPath = errors.New("workbook has no file path")
 
+// fileWriteOperation serializes a workbook to the supplied file path.
+// writeAtomically supplies a temporary path in the destination directory.
+type fileWriteOperation interface {
+	Write(path string) error
+}
+
+type excelWorkbookWriteOperation struct {
+	file *excelize.File
+}
+
+func (o excelWorkbookWriteOperation) Write(path string) error {
+	return o.file.SaveAs(path)
+}
+
+type csvWorkbookWriteOperation struct {
+	workbook *Workbook
+}
+
+func (o csvWorkbookWriteOperation) Write(path string) error {
+	return o.workbook.writeCSV(path)
+}
+
 // Load opens an .xlsx or .csv file. CSV content is loaded into a fresh
 // single-sheet workbook; xlsx files keep everything excelize preserves
 // (styles, widths, other sheets), which is what makes round-trips faithful.
@@ -134,34 +156,101 @@ func (w *Workbook) Save() error {
 // saving a CSV-opened workbook as .xlsx (and vice versa) just works. On
 // success the workbook adopts path as its home and is no longer dirty.
 func (w *Workbook) SaveAs(path string) error {
+	var operation fileWriteOperation
+	var isCSV bool
+
 	switch ext := strings.ToLower(filepath.Ext(path)); ext {
 	// excelize writes the format from the extension and preserves a VBA
 	// project, so macro-enabled and template workbooks opened for editing can
 	// be saved back in place instead of erroring on Ctrl+S.
 	case ".xlsx", ".xlsm", ".xltm", ".xltx":
-		if err := w.file.SaveAs(path); err != nil {
-			return fmt.Errorf("save %s: %w", path, err)
-		}
-		w.isCSV = false
+		operation = excelWorkbookWriteOperation{file: w.file}
 
 	case ".csv":
-		if err := w.saveCSV(path); err != nil {
-			return err
-		}
-		w.isCSV = true
+		operation = csvWorkbookWriteOperation{workbook: w}
+		isCSV = true
 
 	default:
 		return fmt.Errorf("unsupported file type %q (expected .xlsx, .xlsm, .xltm, .xltx, or .csv)", ext)
 	}
+	if err := writeAtomically(path, operation); err != nil {
+		return fmt.Errorf("save %s: %w", path, err)
+	}
 
+	w.isCSV = isCSV
 	w.path = path
 	w.dirty = false
 	return nil
 }
 
-// saveCSV writes the first sheet's computed values — formulas are evaluated,
+// writeAtomically replaces path only after operation has finished and its
+// output is synced to disk. Keeping the temporary file beside path makes the
+// rename atomic because both files are on the same filesystem.
+func writeAtomically(path string, operation fileWriteOperation) error {
+	mode, destinationExists, err := destinationPermissions(path)
+	if err != nil {
+		return err
+	}
+
+	base := filepath.Base(path)
+	extension := filepath.Ext(base)
+	temporaryFile, err := os.CreateTemp(filepath.Dir(path), "."+strings.TrimSuffix(base, extension)+"-*"+extension)
+	if err != nil {
+		return fmt.Errorf("create temporary file: %w", err)
+	}
+	temporaryPath := temporaryFile.Name()
+	if err := temporaryFile.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("close temporary file: %w", err)
+	}
+	defer os.Remove(temporaryPath)
+
+	if destinationExists {
+		if err := os.Chmod(temporaryPath, mode); err != nil {
+			return fmt.Errorf("set temporary file permissions: %w", err)
+		}
+	}
+	if err := operation.Write(temporaryPath); err != nil {
+		return err
+	}
+	if err := syncFile(temporaryPath); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace destination: %w", err)
+	}
+	return nil
+}
+
+func destinationPermissions(path string) (os.FileMode, bool, error) {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("inspect destination: %w", err)
+	}
+	return info.Mode().Perm(), true, nil
+}
+
+func syncFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open temporary file for sync: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("sync temporary file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close temporary file after sync: %w", err)
+	}
+	return nil
+}
+
+// writeCSV writes the first sheet's computed values — formulas are evaluated,
 // matching what Excel does when saving a workbook as CSV.
-func (w *Workbook) saveCSV(path string) error {
+func (w *Workbook) writeCSV(path string) error {
 	sheet := w.Sheets()[0]
 	maxCol, maxRow := w.UsedRange(sheet)
 

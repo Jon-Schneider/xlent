@@ -1,9 +1,9 @@
 # xlent
 
 An Excel-style spreadsheet for the terminal. `xlent` opens, edits, and saves
-`.xlsx` and `.csv` files, evaluates formulas live, and is driven by the
-keyboard shortcuts and mouse gestures you already know from Excel — no modes,
-no new grammar to learn.
+`.xlsx`, `.xlsm`, `.xltm`, `.xltx`, and `.csv` files, evaluates formulas live,
+and is driven by the keyboard shortcuts and mouse gestures you already know
+from Excel — no modes, no new grammar to learn.
 
 ```
 ┌ File  Edit  Format  View  Help ──────────────────────────────────────┐
@@ -65,6 +65,33 @@ fallback).
   other sheets, content it can't display — is preserved on save.
 - **Mouse everywhere.** Click and drag to select, drag column edges in the
   header to resize, click tabs, scroll with the wheel, use the menus.
+
+## Formula compatibility
+
+`xlent` evaluates formulas through excelize, whose 400+ function
+implementations cover the common Excel formula set. Formulas outside that set
+are best-effort.
+
+Dynamic-array formulas and array formulas are not evaluated. This includes
+`FILTER`, `SORT`, `UNIQUE`, `SEQUENCE`, `XLOOKUP`, array constants such as
+`{1,2;3,4}`, and legacy CSE array formulas. `xlent` flags these formulas in the
+status bar and preserves them when saving, so an unsupported result is not
+silently presented as current.
+
+Structured references such as `Table[Column]` and `[@Column]` are tracked for
+dependencies, but are not evaluated. Excel tables themselves can be created
+and managed, and they round-trip and auto-expand normally.
+
+## File support
+
+`xlent` opens and saves `.xlsx`, `.xlsm`, `.xltm`, `.xltx`, and `.csv` files.
+Macro-enabled and template workbooks round-trip through the same workbook
+format; macros are preserved but never executed. CSV files use one sheet, and
+saving to CSV writes the first sheet's displayed values.
+
+Encrypted workbooks that require an open password are not supported: `xlent`
+does not prompt for or accept a password, so it cannot open them. Save an
+unencrypted copy from a spreadsheet application before opening it in `xlent`.
 
 ## Keyboard reference
 

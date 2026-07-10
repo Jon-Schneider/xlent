@@ -176,6 +176,32 @@ func TestMenuItemClickExecutesBeforeNextRender(t *testing.T) {
 	}
 }
 
+func TestMenuItemClickExecutesBeforeFirstRender(t *testing.T) {
+	app, _ := setupTestApp(t)
+
+	press(t, app, tea.Key{Code: tea.KeyF10})
+	for range 5 { // File → Edit → Format → Data → Formulas → View
+		press(t, app, tea.Key{Code: tea.KeyRight})
+	}
+
+	newSheetItem := -1
+	for i, it := range app.menus[app.menuBar.active].items {
+		if it.label == "New Sheet" {
+			newSheetItem = i
+			break
+		}
+	}
+	if newSheetItem < 0 {
+		t.Fatal("no New Sheet item in the active menu")
+	}
+	dropX, _ := app.menuDropdownBounds()
+	app.Update(tea.MouseClickMsg{X: dropX + 1, Y: 1 + newSheetItem, Button: tea.MouseLeft})
+
+	if len(app.wb.Sheets()) != 2 {
+		t.Fatalf("sheets = %v, want a second sheet added", app.wb.Sheets())
+	}
+}
+
 func TestCtrlNWithDirtyWorkbookPromptsBeforeReplacing(t *testing.T) {
 	app, _ := setupTestApp(t)
 

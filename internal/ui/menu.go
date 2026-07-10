@@ -251,13 +251,28 @@ func (a *App) renderMenuBar(width int) string {
 			style = styleMenuTitleActive
 		}
 		b.WriteString(style.Render(label))
-		a.menuBar.titleX = append(a.menuBar.titleX, [2]int{x, x + len(label)})
-		x += len(label)
+		titleWidth := lipgloss.Width(label)
+		a.menuBar.titleX = append(a.menuBar.titleX, [2]int{x, x + titleWidth})
+		x += titleWidth
 	}
 	if pad := width - x; pad > 0 {
 		b.WriteString(styleMenuBar.Render(strings.Repeat(" ", pad)))
 	}
 	return b.String()
+}
+
+// menuTitleBounds calculates a menu title's position without relying on a
+// previous render. Keyboard navigation can open a dropdown before one occurs.
+func (a *App) menuTitleBounds(menuIndex int) (start, end int) {
+	start = 1 // leading space in renderMenuBar
+	for i, m := range a.menus {
+		width := lipgloss.Width(" " + m.title + " ")
+		if i == menuIndex {
+			return start, start + width
+		}
+		start += width
+	}
+	return 0, 0
 }
 
 // menuDropdownBounds returns the active dropdown's on-screen bounds. It is
@@ -273,7 +288,8 @@ func (a *App) menuDropdownBounds() (x, width int) {
 	}
 	inner := labelW + 2 + shortcutW
 	width = inner + 2
-	x = min(a.menuBar.titleX[a.menuBar.active][0], max(a.width, 20)-width)
+	titleX, _ := a.menuTitleBounds(a.menuBar.active)
+	x = min(titleX, max(a.width, 20)-width)
 	return x, width
 }
 

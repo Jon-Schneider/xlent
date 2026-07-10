@@ -100,8 +100,9 @@ and managed, and they round-trip and auto-expand normally.
 
 `xlent` opens and saves `.xlsx`, `.xlsm`, `.xltm`, `.xltx`, and `.csv` files.
 Macro-enabled and template workbooks round-trip through the same workbook
-format; macros are preserved but never executed. CSV files use one sheet, and
-saving to CSV writes the first sheet's displayed values.
+format. `xlent` never executes macros: it retains them as opaque workbook data
+when saving. CSV files use one sheet, and saving to CSV writes the first
+sheet's displayed values.
 
 Encrypted workbooks that require an open password are not supported: `xlent`
 does not prompt for or accept a password, so it cannot open them. Save an

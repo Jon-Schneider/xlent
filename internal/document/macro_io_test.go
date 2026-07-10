@@ -1,6 +1,9 @@
 package document
 
 import (
+	"archive/zip"
+	"bytes"
+	"io"
 	"path/filepath"
 	"testing"
 )
@@ -44,4 +47,55 @@ func TestSaveAcceptsMacroAndTemplateExtensions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSaveAsPreservesVBAProject(t *testing.T) {
+	fixturePath := filepath.Join("testdata", "real-vba-project.xlsm")
+	wantProject := vbaProjectInWorkbook(t, fixturePath)
+	savedPath := filepath.Join(t.TempDir(), "saved.xlsm")
+
+	workbook, err := Load(fixturePath)
+	if err != nil {
+		t.Fatalf("Load(%s): %v", fixturePath, err)
+	}
+	defer workbook.Close()
+
+	if err := workbook.SaveAs(savedPath); err != nil {
+		t.Fatalf("SaveAs(%s): %v", savedPath, err)
+	}
+
+	if gotProject := vbaProjectInWorkbook(t, savedPath); !bytes.Equal(gotProject, wantProject) {
+		t.Error("saved workbook changed its VBA project")
+	}
+}
+
+func vbaProjectInWorkbook(t *testing.T, path string) []byte {
+	t.Helper()
+
+	archive, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatalf("open workbook archive %s: %v", path, err)
+	}
+	defer archive.Close()
+
+	for _, file := range archive.File {
+		if file.Name != "xl/vbaProject.bin" {
+			continue
+		}
+
+		contents, err := file.Open()
+		if err != nil {
+			t.Fatalf("open VBA project in %s: %v", path, err)
+		}
+		defer contents.Close()
+
+		project, err := io.ReadAll(contents)
+		if err != nil {
+			t.Fatalf("read VBA project in %s: %v", path, err)
+		}
+		return project
+	}
+
+	t.Fatalf("workbook %s does not contain a VBA project", path)
+	return nil
 }

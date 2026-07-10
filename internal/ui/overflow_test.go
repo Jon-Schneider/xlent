@@ -246,19 +246,65 @@ func TestFittingValuesRenderNormally(t *testing.T) {
 	}
 }
 
-// Overflow must never grow a row's height: the whole grid stays one line per
-// sheet row even when a value is far wider than its column.
-func TestOverflowKeepsRowsSingleLine(t *testing.T) {
+// Overflow must never grow a row's height: a value far wider than its column
+// must not add lines to the screen. Comparing total line count against an empty
+// sheet catches wrapping regardless of what the wrapped continuation contains.
+func TestOverflowKeepsScreenHeight(t *testing.T) {
+	baseline := strings.Count(ansi.Strip(buildApp(t).View().Content), "\n")
+
 	app := buildApp(t)
 	set(t, app, "A3", strings.Repeat("wide", 40))
-	screen := ansi.Strip(app.View().Content)
-	got := 0
-	for _, line := range strings.Split(screen, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "3 ") {
-			got++
+	got := strings.Count(ansi.Strip(app.View().Content), "\n")
+	if got != baseline {
+		t.Errorf("wide value changed screen height: %d lines vs empty %d (wrapping?)", got, baseline)
+	}
+}
+
+// --- formula-result classification (the CellTypeFormula path) ---
+
+// setFormula writes a formula and, optionally, a number format.
+func setFormula(t *testing.T, app *App, cell, formula string, fmt *document.NumberFormat) {
+	t.Helper()
+	sheet := app.wb.Sheets()[0]
+	if err := app.wb.SetCell(sheet, cell, formula); err != nil {
+		t.Fatal(err)
+	}
+	if fmt != nil {
+		col, row := colRowOf(t, cell)
+		if err := app.wb.SetNumberFormat(sheet, col, row, col, row, *fmt); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if got != 1 {
-		t.Errorf("row 3 rendered on %d lines, want exactly 1 (no wrapping)", got)
+}
+
+func colRowOf(t *testing.T, cell string) (int, int) {
+	t.Helper()
+	c, r, err := engine.ParseCellName(cell)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, r
+}
+
+// A formula whose result is shown under a numeric format must hash-fill, not
+// spill its formatted digits across neighbors — the round-2 regression.
+func TestFormulaWithNumericFormatDoesNotSpill(t *testing.T) {
+	app := buildApp(t)
+	cur := document.FormatCurrency
+	setFormula(t, app, "A3", "=1234567.89", &cur)
+	line := gridRow(t, app, 3)
+	if !strings.Contains(line, "########") {
+		t.Errorf("overwide currency formula should hash-fill, got %q", line)
+	}
+}
+
+// A formula returning text (even text that starts with '#') must spill, not be
+// mistaken for an error or number.
+func TestFormulaReturningTextSpills(t *testing.T) {
+	app := buildApp(t)
+	setFormula(t, app, "A3", `="#winning long hashtag text"`, nil)
+	line := gridRow(t, app, 3)
+	if !strings.Contains(line, "#winning long hashtag text") {
+		t.Errorf("text-result formula should spill in full, got %q", line)
 	}
 }

@@ -279,14 +279,35 @@ func (w *Workbook) isTextCell(sheet, cell string) bool {
 	return t == excelize.CellTypeSharedString || t == excelize.CellTypeInlineString
 }
 
+// isErrorLiteral reports whether a display value is one of the Excel error
+// literals formula evaluation can produce. It is the canonical error test used
+// alongside knownErrorValues, so error classification stays consistent.
+func isErrorLiteral(v string) bool {
+	if v == CircularRefError {
+		return true
+	}
+	for _, code := range knownErrorValues {
+		if v == code {
+			return true
+		}
+	}
+	return false
+}
+
 // DisplaysText reports whether a cell renders as text rather than a number,
 // date, currency, percentage, boolean, or error. The grid uses this to pick
 // overflow behavior: text spills into blank neighbors, while everything else
 // shows a "#" fill when too narrow — matching Excel, which never spills a
-// non-text value. Number/date/currency/percentage cells carry no stored cell
-// type (xlsx omits the `t` attribute for numeric content), so anything that is
-// not an explicit string — and not a formula whose result reads as text — is
-// treated as non-text.
+// non-text value.
+//
+// excelize reports CellTypeFormula for any cell holding a formula, hiding the
+// cached result type, so formula cells are classified by their result: an
+// error literal or a value shown under a numeric/date number format is
+// non-text. Only under the General or explicit-text formats — where a numeric
+// result renders unformatted — is the result parsed to tell number from text.
+// Plain numbers, dates, currency, and percentages carry no stored cell type
+// (xlsx omits the `t` attribute for numeric content), so any non-string,
+// non-formula cell is treated as non-text.
 func (w *Workbook) DisplaysText(sheet, cellName string) bool {
 	_, cell, err := w.node(sheet, cellName)
 	if err != nil {
@@ -296,13 +317,18 @@ func (w *Workbook) DisplaysText(sheet, cellName string) bool {
 	case excelize.CellTypeSharedString, excelize.CellTypeInlineString:
 		return true
 	case excelize.CellTypeFormula:
-		// Formula cells store no value type, so classify by the computed
-		// result: an error literal or a value that parses as a number is not
-		// text (it should hash-fill), everything else is.
 		v := strings.TrimSpace(w.DisplayValue(sheet, cellName))
-		if strings.HasPrefix(v, "#") {
+		if isErrorLiteral(v) {
 			return false
 		}
+		style := w.CellStyleAt(sheet, cellName)
+		switch {
+		case style.NumFmtCustom != "" || (style.NumFmtID != 0 && style.NumFmtID != FormatText.ID):
+			return false // a numeric / date / currency / percentage format
+		case style.NumFmtID == FormatText.ID:
+			return true // explicit text format
+		}
+		// General format: a numeric result renders unformatted, so parse it.
 		_, numeric := parseNumber(v)
 		return !numeric
 	default:

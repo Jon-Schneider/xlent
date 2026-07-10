@@ -344,7 +344,14 @@ func (a *App) renderGrid(layout gridLayout) string {
 		// Overflow needs the whole row planned before anything is drawn, since
 		// one cell's text can spill across its neighbors: plan, resolve spill,
 		// then emit.
-		plans := a.planRow(layout, row, sel, refSpans, pointing, pointed, onEditSheet, visibleCols)
+		plans := a.planRow(layout, row, rowContext{
+			sel:         sel,
+			refSpans:    refSpans,
+			pointing:    pointing,
+			pointed:     pointed,
+			onEditSheet: onEditSheet,
+			visibleCols: visibleCols,
+		})
 		resolveSpill(plans)
 		for idx := range plans {
 			cr := plans[idx]
@@ -380,18 +387,30 @@ func (a *App) renderGrid(layout gridLayout) string {
 	return b.String()
 }
 
+// rowContext carries the per-render invariants planRow needs beyond the row
+// itself: the selection rectangle, formula-ref tints, and cross-sheet pointing
+// state. Bundling them keeps planRow's signature readable.
+type rowContext struct {
+	sel         rect
+	refSpans    []refSpan
+	pointing    bool
+	pointed     rect
+	onEditSheet bool
+	visibleCols map[int]bool
+}
+
 // planRow builds a render plan for every visible column in one grid row,
 // classifying each cell as a spill source, a "#"-fill, a blank spill receiver,
 // a merge-covered cell, or the in-cell editor. resolveSpill then consumes this
 // to lay out horizontal overflow.
-func (a *App) planRow(layout gridLayout, row int, sel rect, refSpans []refSpan, pointing bool, pointed rect, onEditSheet bool, visibleCols map[int]bool) []cellPlan {
+func (a *App) planRow(layout gridLayout, row int, rc rowContext) []cellPlan {
 	plans := make([]cellPlan, len(layout.cols))
 	for idx, c := range layout.cols {
 		p := position{Col: c, Row: row}
 		cr := cellPlan{col: c, w: a.cellRenderWidth(layout, p), style: styleCell, align: lipgloss.Left}
 		merged, inMerge := a.wb.MergedRangeAt(a.sheet, c, row)
 		mergeAnchor := position{Col: merged.MinCol, Row: merged.MinRow}
-		if inMerge && row == merged.MinRow && c > merged.MinCol && visibleCols[merged.MinCol] {
+		if inMerge && row == merged.MinRow && c > merged.MinCol && rc.visibleCols[merged.MinCol] {
 			cr.skip = true
 			plans[idx] = cr
 			continue
@@ -400,7 +419,7 @@ func (a *App) planRow(layout gridLayout, row int, sel rect, refSpans []refSpan, 
 		// While editing, the active cell shows the raw editor text with the
 		// real terminal cursor (placed by placeCursor), so no reverse-video
 		// style here. The editor never spills or receives spill.
-		if a.editor.active && onEditSheet && p == a.cursor {
+		if a.editor.active && rc.onEditSheet && p == a.cursor {
 			cr.editor = true
 			cr.value, _ = a.editor.window(cr.w - 2*cellPadding)
 			plans[idx] = cr
@@ -414,18 +433,18 @@ func (a *App) planRow(layout gridLayout, row int, sel rect, refSpans []refSpan, 
 
 		style := styleCell
 		highlighted := false
-		refTint, tinted := refTintAt(refSpans, a.sheet, p)
+		refTint, tinted := refTintAt(rc.refSpans, a.sheet, p)
 		switch {
-		case pointing && pointed.contains(p):
+		case rc.pointing && rc.pointed.contains(p):
 			style = stylePointedRef
 			highlighted = true
 		case tinted:
 			style = refTint
 			highlighted = true
-		case onEditSheet && p == a.cursor:
+		case rc.onEditSheet && p == a.cursor:
 			style = styleCursorCell
 			highlighted = true
-		case onEditSheet && (sel.contains(p) || inMerge && sel.contains(mergeAnchor)):
+		case rc.onEditSheet && (rc.sel.contains(p) || inMerge && rc.sel.contains(mergeAnchor)):
 			style = styleCellSelected
 			highlighted = true
 		case isErrorValue(value):
@@ -443,11 +462,13 @@ func (a *App) planRow(layout gridLayout, row int, sel rect, refSpans []refSpan, 
 		cr.value = value
 		cr.style = style
 		if value != "" {
-			text := a.wb.DisplaysText(a.sheet, p.cellName())
 			// Non-text values (numbers, dates, currency, %, errors) never spill;
-			// they "#"-fill when too narrow and align right when numeric.
+			// they align right and "#"-fill when too narrow. Text spills and
+			// stays left-aligned. Keying both off the same signal keeps a value
+			// from being right-aligned yet spilling like text.
+			text := a.wb.DisplaysText(a.sheet, p.cellName())
 			cr.fill = !text
-			if isNumeric(value) {
+			if !text {
 				cr.align = lipgloss.Right
 			}
 			// A text cell may spill its overflow right, but not when it is
@@ -457,7 +478,8 @@ func (a *App) planRow(layout gridLayout, row int, sel rect, refSpans []refSpan, 
 		}
 		// A blank cell can absorb a left neighbor's spill only when nothing else
 		// claims it: no highlight and no merge membership, so the spill never
-		// paints over those.
+		// paints over those. (A highlighted blank briefly blocks spill as the
+		// cursor passes — an accepted cost of cell-width terminal styling.)
 		cr.receives = value == "" && !highlighted && !inMerge
 		plans[idx] = cr
 	}

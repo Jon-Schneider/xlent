@@ -6,5 +6,5 @@
 *.out
 .DS_Store
 
-AGENTS.local.md
+AGENTS.md
 CLAUDE.local.md

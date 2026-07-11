@@ -5,20 +5,7 @@ An Excel-style spreadsheet for the terminal. `xlent` opens, edits, and saves
 and is driven by the keyboard shortcuts and mouse gestures you already know
 from Excel — no modes, no new grammar to learn.
 
-```
-┌ File  Edit  Format  Data  Formulas  View  Help ──────────────────────┐
-│ B3            =SUM(B1:B2)                                            │
-├──────┬───────────┬───────────┬───────────┬───────────┬───────────────┤
-│      │     A     │     B     │     C     │     D     │      E        │
-├──────┼───────────┼───────────┼───────────┼───────────┼───────────────┤
-│   1  │ Revenue   │     1,200 │           │           │               │
-│   2  │ Costs     │       800 │           │           │               │
-│   3  │ Total     │ ▓▓▓2,000▓ │           │           │               │
-├──────┴───────────┴───────────┴───────────┴───────────┴───────────────┤
-│ Sheet1 │ Sheet2 │                                                    │
-│ budget.xlsx [+]                 SUM=2,000          Ready             │
-└───────────────────────────────────────────────────────────────────────┘
-```
+![xlent showing a formula-backed dashboard with live cross-sheet calculations](Screenshot.png)
 
 ## Install
 

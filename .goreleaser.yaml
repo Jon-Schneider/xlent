@@ -50,6 +50,25 @@ archives:
       - README.md
       - THIRD_PARTY_NOTICES.txt
 
+notarize:
+  macos:
+    # Sign (Developer ID Application, hardened runtime) and notarize the macOS
+    # binaries so a `brew install --cask` — which quarantines its artifacts —
+    # passes Gatekeeper. Runs via quill (pure Go) on the Linux runner, so no
+    # macOS runner is needed. Gated on the signing cert being present: releases
+    # cut before the secrets exist ship unsigned rather than failing.
+    - enabled: '{{ isEnvSet "MACOS_SIGN_P12" }}'
+      ids:
+        - xlent
+      sign:
+        certificate: "{{ .Env.MACOS_SIGN_P12 }}"
+        password: "{{ .Env.MACOS_SIGN_PASSWORD }}"
+      notarize:
+        issuer_id: "{{ .Env.MACOS_NOTARY_ISSUER_ID }}"
+        key_id: "{{ .Env.MACOS_NOTARY_KEY_ID }}"
+        key: "{{ .Env.MACOS_NOTARY_KEY }}"
+        wait: true
+
 checksum:
   name_template: "checksums.txt"
   algorithm: sha256
@@ -69,3 +88,21 @@ changelog:
 release:
   draft: true
   prerelease: auto
+
+homebrew_casks:
+  # Publish a Homebrew cask to the tap repo on each release so macOS users can
+  # `brew tap jon-schneider/xlent && brew install --cask xlent`. GoReleaser
+  # writes Casks/xlent.rb (pointing at the notarized darwin archives + their
+  # SHA-256s) and commits it to Jon-Schneider/homebrew-xlent.
+  - name: xlent
+    ids:
+      - xlent
+    repository:
+      owner: Jon-Schneider
+      name: homebrew-xlent
+      branch: main
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/Jon-Schneider/xlent"
+    description: "Terminal spreadsheet editor"
+    # Only publish the cask for real (non-prerelease) tags.
+    skip_upload: auto

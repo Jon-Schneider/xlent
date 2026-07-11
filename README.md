@@ -6,7 +6,7 @@ and is driven by the keyboard shortcuts and mouse gestures you already know
 from Excel — no modes, no new grammar to learn.
 
 ```
-┌ File  Edit  Format  View  Help ──────────────────────────────────────┐
+┌ File  Edit  Format  Data  Formulas  View  Help ──────────────────────┐
 │ B3            =SUM(B1:B2)                                            │
 ├──────┬───────────┬───────────┬───────────┬───────────┬───────────────┤
 │      │     A     │     B     │     C     │     D     │      E        │
@@ -28,7 +28,7 @@ go build -o xlent ./cmd/xlent     # or: ./build.sh (vet + tests + build)
 ./xlent --help                 # usage; --version prints the build version
 ```
 
-Requires Go 1.25+.
+Requires Go 1.26+.
 
 ## Platform and terminal support
 
@@ -64,15 +64,26 @@ Windows-Excel-style `Ctrl` bindings.
 - **Copy/cut/paste with Excel semantics.** Copying adjusts relative
   references; cutting drags references along with the move (`$`-anchors pin
   against copies, not moves). External paste via the terminal clipboard, TSV
-  in and out.
+  in and out. Paste Special variants paste values, formats, or a transposed
+  block from the Edit menu.
 - **Structure editing.** Insert/delete rows (`Ctrl++` / `Ctrl+-`) and
   columns; add, rename, and delete sheets. Renaming a sheet rewrites every
   formula that referenced it by name.
 - **Formatting.** Number formats (currency, percent, date/time, text…) and
   bold/italic/underline (`Ctrl+B/I/U`) from the Format menu, persisted to the
   file as standard xlsx styles.
-- **Find and Go To.** `Ctrl+F` searches content and displayed values (`F3`
-  repeats); `Ctrl+G` jumps to a cell, range, or `Sheet2!B3`.
+- **Data tools.** Sort a range ascending or descending; filter rows against a
+  column (`Ctrl+Shift+L`, `Clear Filter` to restore); fill down/right
+  (`Ctrl+D` / `Ctrl+R`) or fill a numeric series; create and remove Excel
+  tables that auto-expand as you type below them. Data-validation rules already
+  in a workbook are enforced on entry (authoring new rules is not yet
+  supported).
+- **Named ranges and freeze panes.** Define and delete workbook names from the
+  Formulas menu; freeze/unfreeze panes and force a full `Recalculate All`
+  (`F9`) from the View menu.
+- **Find, Replace, and Go To.** `Ctrl+F` searches content and displayed values
+  (`F3` repeats); `Ctrl+H` replaces across the sheet; `Ctrl+G` jumps to a cell,
+  range, or `Sheet2!B3`.
 - **Undo/redo for everything** (`Ctrl+Z` / `Ctrl+Y`): one user action is one
   undo step. Structural changes (rows, columns, sheets, formats) restore
   whole-workbook snapshots; plain edits replay.
@@ -121,8 +132,11 @@ unencrypted copy from a spreadsheet application before opening it in `xlent`.
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
 | `Ctrl++` / `Ctrl+-` | Insert / delete rows (columns via Edit menu) |
+| `Ctrl+D` / `Ctrl+R` | Fill down / right (fill series via Data menu) |
+| `Ctrl+Shift+L` | Toggle filter on the selected column |
 | `Ctrl+B` / `Ctrl+I` / `Ctrl+U` | Bold / italic / underline |
-| `Ctrl+F`, `F3`, `Ctrl+G` | Find, find next, go to |
+| `Ctrl+F`, `F3`, `Ctrl+H`, `Ctrl+G` | Find, find next, replace, go to |
+| `F9` | Recalculate all |
 | `Ctrl+S` / `Ctrl+Shift+S`, `Ctrl+O`, `Ctrl+N` | Save / save as, open, new |
 | `F2` | Edit cell in place |
 | `F10` | Open the menu bar |

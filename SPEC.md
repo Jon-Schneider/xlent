@@ -1,8 +1,9 @@
 # xlent — A Terminal Spreadsheet
 
 `xlent` is a non-modal, Excel-style spreadsheet for the terminal. It opens, edits, and
-saves `.xlsx` and `.csv` files, evaluates formulas live, and is driven by familiar
-Excel keyboard shortcuts and the mouse — no vim grammar, no editing modes to learn.
+saves `.xlsx`, `.xlsm`, `.xltm`, `.xltx`, and `.csv` files, evaluates formulas live, and
+is driven by familiar Excel keyboard shortcuts and the mouse — no vim grammar, no editing
+modes to learn.
 
 ## 1. Goals
 
@@ -16,10 +17,16 @@ Excel keyboard shortcuts and the mouse — no vim grammar, no editing modes to l
 
 ### Non-goals (v1)
 
-- Charts, pivot tables, conditional formatting, data validation (preserved on
-  round-trip, not editable).
-- A cell-formatting UI (fonts, colors, borders). Existing formats are *displayed*
-  where feasible and always *preserved*; creating new ones comes later.
+- Charts, pivot tables, conditional formatting. Preserved on round-trip, not
+  editable.
+- **Authoring data validation.** Validation rules already present in a workbook
+  are *enforced* on cell entry (list, whole/decimal number, text length, date,
+  and time constraints; `custom` and formula-based rules are rejected rather
+  than silently accepted), but there is no UI to create or edit rules.
+- **A full cell-formatting UI.** Number formats (General/Number/Currency/
+  Percent/Date/Time/Text) and bold/italic/underline emphasis *can* be applied
+  and are saved as standard xlsx styles. Colors, borders, and alignment are
+  *displayed* where feasible and always *preserved*, but cannot yet be set.
 - **Array formulas / dynamic arrays (spilled formulas).** This is a hard
   backend limitation, not just a scope choice: excelize's `CalcCellValue`
   implements none of the dynamic-array functions (`FILTER`, `SORT`, `UNIQUE`,
@@ -51,7 +58,7 @@ Excel keyboard shortcuts and the mouse — no vim grammar, no editing modes to l
 ## 3. Screen layout
 
 ```
-┌ File  Edit  View  Help ──────────────────────────────────────────────┐  ← menu bar (mouse + F10)
+┌ File  Edit  Format  Data  Formulas  View  Help ──────────────────────┐  ← menu bar (mouse + F10)
 │ B3            =SUM(B1:B2)                                            │  ← cell reference + formula bar
 ├──────┬───────────┬───────────┬───────────┬───────────┬───────────────┤
 │      │     A     │     B     │     C     │     D     │      E        │
@@ -110,6 +117,12 @@ rows/columns, wheel scrolls, click on sheet tabs switches sheets.
 |---|---|
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste (with reference adjustment, §5) |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / redo |
+| `Ctrl+F` / `F3` / `Ctrl+H` / `Ctrl+G` | Find / find next / replace / go to |
+| `Ctrl++` / `Ctrl+-` | Insert / delete rows (columns via Edit menu) |
+| `Ctrl+D` / `Ctrl+R` | Fill down / right (fill series via Data menu) |
+| `Ctrl+Shift+L` | Toggle filter on the selected column |
+| `Ctrl+B` / `Ctrl+I` / `Ctrl+U` | Bold / italic / underline |
+| `F9` | Recalculate all |
 | `Ctrl+S` | Save (`Ctrl+Shift+S` save-as) |
 | `Ctrl+O` | Open |
 | `Ctrl+N` | New workbook |
@@ -134,10 +147,21 @@ cannot represent some combos.
 Cmd-based macOS shortcuts are impossible in any terminal (the emulator consumes
 them); `xlent` uses Windows-Excel-style Ctrl bindings everywhere.
 
+### Data tools
+
+Beyond editing, the **Data** menu offers range **sort** (ascending/descending,
+numeric-aware), single-column **filter** (`Ctrl+Shift+L`, hiding non-matching
+rows until cleared), **fill** down/right (`Ctrl+D`/`Ctrl+R`) and fill-series,
+and Excel **tables** that auto-expand as rows are added below them. The **View**
+menu adds **freeze/unfreeze panes** and **Recalculate All** (`F9`). All go
+through `document` like every other mutation, so they undo and recalc uniformly.
+
 ## 5. Formulas
 
 - **Syntax:** Excel A1 notation — cell refs (`B2`), ranges (`A1:B10`), absolute refs
   (`$A$1`), cross-sheet refs (`Sheet2!A1`), the usual operators, and function calls.
+- **Named ranges:** workbook-scoped defined names can be created and deleted
+  (Formulas menu), resolve in formulas, and round-trip on save.
 - **Evaluation:** the excelize workbook is the single source of truth for cell
   content. Evaluation delegates to excelize's `CalcCellValue` (400+ functions).
 - **Incremental recalc:** `xlent` maintains its own dependency graph, built by parsing
@@ -146,11 +170,14 @@ them); `xlent` uses Windows-Excel-style Ctrl bindings everywhere.
   circular-reference errors rather than hangs.
 - **Errors:** standard Excel error values (`#DIV/0!`, `#NAME?`, `#REF!`,
   `#VALUE!`, `#N/A`) rendered distinctly in the grid.
-- **Tested core function set** (CI-verified against expected outputs; everything
-  else excelize supports works on a best-effort basis):
-  `SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTIF, SUMIF, IF, IFERROR, AND, OR,
-  NOT, ROUND, ROUNDUP, ROUNDDOWN, ABS, INT, MOD, SQRT, POWER, CONCATENATE, LEFT,
-  RIGHT, MID, LEN, TRIM, UPPER, LOWER, TODAY, NOW, DATE, VLOOKUP, INDEX, MATCH`
+- **Tested core function set** (CI-verified against expected outputs in
+  `internal/document/compat_test.go`; everything else excelize supports works on
+  a best-effort basis):
+  `SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, COUNTIF, SUMIF, SUMPRODUCT, AVERAGEIF,
+  IF, IFERROR, AND, OR, NOT, XOR, ROUND, ROUNDUP, ROUNDDOWN, ABS, INT, MOD, SQRT,
+  POWER, CONCATENATE, LEFT, RIGHT, MID, LEN, TRIM, UPPER, LOWER, SUBSTITUTE, TEXT,
+  DATE, YEAR, MONTH, DAY, VLOOKUP, INDEX, MATCH`. Volatile functions (`TODAY`,
+  `NOW`, `RAND`, …) recalculate on `F9` and are covered by their own tests.
 
 ### Clipboard semantics
 
@@ -171,9 +198,14 @@ per-workbook, survives sheet switches, and is discarded on file close.
 
 ## 7. Files
 
-- **xlsx:** loaded and saved via excelize against the same in-memory workbook, so
-  untouched cells, styles, formats, defined names, and other sheets round-trip
-  intact. Multi-sheet workbooks fully supported (tabs in UI).
+- **xlsx family (`.xlsx`, `.xlsm`, `.xltm`, `.xltx`):** loaded and saved via
+  excelize against the same in-memory workbook, so untouched cells, styles,
+  formats, defined names, and other sheets round-trip intact. Multi-sheet
+  workbooks fully supported (tabs in UI). Macro-enabled and template workbooks
+  round-trip through the same format; macros are retained as opaque data and
+  never executed. Encrypted (open-password) workbooks are not supported — xlent
+  neither prompts for nor accepts a password. `.xls` and `.xlsb` are not
+  supported.
 - **csv:** loaded into a fresh single-sheet workbook; saving back to `.csv` writes
   computed values (formulas evaluated, as Excel does when saving CSV). Saving a
   CSV-opened file as `.xlsx` (and vice versa) is supported via save-as.

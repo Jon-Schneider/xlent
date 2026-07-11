@@ -1,6 +1,8 @@
 module github.com/Jon-Schneider/xlent
 
-go 1.25.0
+go 1.26
+
+toolchain go1.26.5
 
 require (
 	charm.land/bubbletea/v2 v2.0.7
@@ -8,6 +10,7 @@ require (
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/xuri/efp v0.0.1
 	github.com/xuri/excelize/v2 v2.10.1
+	golang.org/x/sys v0.47.0
 )
 
 require (
@@ -27,9 +30,8 @@ require (
 	github.com/tiendc/go-deepcopy v1.7.2 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
 )

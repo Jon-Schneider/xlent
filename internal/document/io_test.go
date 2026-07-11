@@ -260,8 +260,14 @@ func TestSaveWithoutPathReturnsErrNoPath(t *testing.T) {
 }
 
 func TestLoadRejectsUnsupportedExtension(t *testing.T) {
-	if _, err := Load("notes.txt"); err == nil {
+	_, err := Load("notes.txt")
+	if err == nil {
 		t.Error("Load(.txt) must fail")
+	}
+	for _, extension := range []string{".xlsx", ".xlsm", ".xltm", ".xltx", ".csv"} {
+		if !strings.Contains(err.Error(), extension) {
+			t.Errorf("Load(.txt) error = %q, want supported extension %s", err, extension)
+		}
 	}
 }
 

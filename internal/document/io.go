@@ -137,7 +137,7 @@ func Load(path string) (*Workbook, error) {
 		return w, nil
 
 	default:
-		return nil, fmt.Errorf("unsupported file type %q (expected .xlsx or .csv)", ext)
+		return nil, fmt.Errorf("unsupported file type %q (expected .xlsx, .xlsm, .xltm, .xltx, or .csv)", ext)
 	}
 }
 

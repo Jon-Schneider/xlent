@@ -22,13 +22,25 @@ from Excel — no modes, no new grammar to learn.
 
 ## Install
 
+Tagged releases provide ready-to-run archives for macOS, Linux, and Windows on
+the [GitHub Releases page](https://github.com/Jon-Schneider/xlent/releases).
+
+With Go 1.26 or newer, install the latest release directly:
+
 ```sh
-go build -o xlent ./cmd/xlent     # or: ./build.sh (vet + tests + build)
-./xlent budget.xlsx            # open a file, or run bare for a blank workbook
-./xlent --help                 # usage; --version prints the build version
+go install github.com/Jon-Schneider/xlent/cmd/xlent@latest
 ```
 
-Requires Go 1.26+.
+Then open a workbook, or run `xlent` with no arguments to start with a blank
+workbook:
+
+```sh
+xlent budget.xlsx
+xlent --help
+```
+
+To build from a source checkout, run `./build.sh`; it vets and tests the code
+before writing the `xlent` binary at the repository root.
 
 ## Platform and terminal support
 
@@ -87,8 +99,9 @@ Windows-Excel-style `Ctrl` bindings.
 - **Undo/redo for everything** (`Ctrl+Z` / `Ctrl+Y`): one user action is one
   undo step. Structural changes (rows, columns, sheets, formats) restore
   whole-workbook snapshots; plain edits replay.
-- **Faithful round-trips.** Anything `xlent` doesn't touch — styles, widths,
-  other sheets, content it can't display — is preserved on save.
+- **Faithful round-trips.** `xlent` is designed to preserve workbook content it
+  does not edit where supported by Excelize, including styles, widths, other
+  sheets, and content it cannot display.
 - **Mouse everywhere.** Click and drag to select, drag column edges in the
   header to resize, click tabs, scroll with the wheel, use the menus.
 
@@ -175,3 +188,7 @@ product definition.
 Licensed under the [Apache License, Version 2.0](LICENSE). Third-party
 dependencies retain their own licenses; see the in-app Help → Attributions
 screen for the full list.
+
+Microsoft Excel is a trademark of the Microsoft group of companies. `xlent` is
+an independent project and is not affiliated with, endorsed by, sponsored by,
+or approved by Microsoft.

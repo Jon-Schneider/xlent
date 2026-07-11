@@ -22,8 +22,23 @@ from Excel — no modes, no new grammar to learn.
 
 ## Install
 
+### macOS (Homebrew)
+
+```sh
+brew tap jon-schneider/xlent
+brew install --cask xlent
+```
+
+The cask installs a signed, notarized binary, so it runs without any Gatekeeper
+prompt. Upgrade with `brew upgrade --cask xlent`.
+
+### Prebuilt archives
+
 Tagged releases provide ready-to-run archives for macOS, Linux, and Windows on
-the [GitHub Releases page](https://github.com/Jon-Schneider/xlent/releases).
+the [GitHub Releases page](https://github.com/Jon-Schneider/xlent/releases),
+each with a `checksums.txt` for verification.
+
+### From Go
 
 With Go 1.26 or newer, install the latest release directly:
 

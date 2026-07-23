@@ -89,10 +89,10 @@ modes to learn.
 
 - Typing any printable character on a selected cell **starts a new edit, replacing
   the content** (Excel behavior). `=` starts a formula.
-- `F2` edits the existing content with the cursor at the end.
+- `Enter`/`Return` or `F2` edits the existing content with the cursor at the end.
 - While editing: `Enter` commits and moves down; `Tab` commits and moves right;
   `Esc` cancels; arrow keys commit and move (Excel's quick-entry behavior), except
-  after `F2`, where arrows move within the text.
+  after `Enter`/`Return` or `F2`, where arrows move within the text.
 - `Delete`/`Backspace` on a selection clears contents.
 
 ### Navigation & selection

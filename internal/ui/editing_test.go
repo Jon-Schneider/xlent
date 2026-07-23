@@ -78,6 +78,29 @@ func TestF2EditsInPlaceWithArrowsMovingInText(t *testing.T) {
 	}
 }
 
+func TestReturnEditsExistingCellContentInPlace(t *testing.T) {
+	app, wb := setupTestApp(t)
+
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+	if !app.editor.active {
+		t.Fatal("Return must open the editor")
+	}
+	if got := app.editor.String(); got != "10" {
+		t.Fatalf("editor content = %q, want existing 10", got)
+	}
+
+	press(t, app, tea.Key{Code: tea.KeyLeft})
+	typeText(t, app, "5")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	if got := wb.DisplayValue(app.sheet, "A1"); got != "150" {
+		t.Errorf("A1 = %q, want 150 (inserted before last digit)", got)
+	}
+	if app.cursor.Row != 2 {
+		t.Errorf("cursor row = %d, want 2 after committing with Return", app.cursor.Row)
+	}
+}
+
 func TestTypedFormulaEvaluatesOnCommit(t *testing.T) {
 	app, wb := setupTestApp(t)
 

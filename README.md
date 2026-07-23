@@ -63,8 +63,8 @@ Windows-Excel-style `Ctrl` bindings.
 
 ## Features
 
-- **Excel's editing model.** Typing replaces the cell, `F2` edits in place,
-  `Enter`/`Tab`/arrows commit and move, `Esc` cancels. Formulas normalize on
+- **Excel's editing model.** Typing replaces the cell; `Return` or `F2` edits in
+  place. Once editing, `Enter`/`Tab` commits and moves, while `Esc` cancels. Formulas normalize on
   entry — `=sum(a1:a2` commits as `=SUM(A1:A2)`, with parens and string
   quotes auto-closed.
 - **Live formulas.** A dependency graph recalculates exactly the affected
@@ -153,7 +153,7 @@ unencrypted copy from a spreadsheet application before opening it in `xlent`.
 | `Ctrl+F`, `F3`, `Ctrl+H`, `Ctrl+G` | Find, find next, replace, go to |
 | `F9` | Recalculate all |
 | `Ctrl+S` / `Ctrl+Shift+S`, `Ctrl+O`, `Ctrl+N` | Save / save as, open, new |
-| `F2` | Edit cell in place |
+| `Return` / `F2` | Edit cell in place (while editing, `Return` commits) |
 | `F10` | Open the menu bar |
 | `Ctrl+Q` / `Ctrl+W` | Quit |
 

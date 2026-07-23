@@ -1,8 +1,8 @@
 package ui
 
 // editMode distinguishes Excel's two editing behaviors: an edit started by
-// typing (Enter mode — arrow keys commit and move) and one started with F2
-// (Edit mode — left/right move within the text).
+// typing (Enter mode — arrow keys commit and move) and one started with Return
+// or F2 (Edit mode — left/right move within the text).
 type editMode int
 
 const (

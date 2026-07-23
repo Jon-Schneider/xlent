@@ -784,7 +784,7 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		a.startEdit(a.wb.RawContent(a.sheet, a.cursor.cellName()), editModeInPlace)
 
 	case "enter":
-		a.moveCursor(0, 1, false)
+		a.startEdit(a.wb.RawContent(a.sheet, a.cursor.cellName()), editModeInPlace)
 	case "shift+enter":
 		a.moveCursor(0, -1, false)
 	case "tab":

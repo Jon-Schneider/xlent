@@ -39,6 +39,10 @@ type App struct {
 	menus   []menu
 	menuBar menuBar
 
+	// headingMenu is the row/column context menu opened by right-clicking a
+	// heading. Its actions operate on the heading selected when it opened.
+	headingMenu headingContextMenu
+
 	// attributions is the Help ▸ Attributions panel state (open/scroll).
 	attributions attributionsOverlay
 
@@ -120,6 +124,8 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a.handleAttributionsKey(msg)
 		case a.prompt.active():
 			return a.handlePromptKey(msg)
+		case a.headingMenu.visible:
+			return a.handleHeadingMenuKey(msg)
 		case a.menuBar.open:
 			return a.handleMenuKey(msg)
 		case a.editor.active:
@@ -141,6 +147,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.attributions.open {
 			a.handleAttributionsMouse(tea.Mouse(msg))
 			return a, nil
+		}
+		if handled, model, cmd := a.handleHeadingMenuClick(tea.Mouse(msg)); handled {
+			return model, cmd
 		}
 		if handled, model, cmd := a.handleMenuClick(tea.Mouse(msg)); handled {
 			return model, cmd
@@ -532,6 +541,49 @@ func (a *App) handleMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a.execMenuAction(action)
 	}
 	return a, nil
+}
+
+// handleHeadingMenuKey provides the same compact keyboard navigation as the
+// menu bar after a heading context menu has been opened with the mouse.
+func (a *App) handleHeadingMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		a.headingMenu.close()
+	case "up":
+		a.headingMenu.moveSelection(-1)
+	case "down":
+		a.headingMenu.moveSelection(1)
+	case "enter", "space":
+		action := a.headingMenu.items[a.headingMenu.selected].action
+		a.headingMenu.close()
+		return a.execMenuAction(action)
+	}
+	return a, nil
+}
+
+// handleHeadingMenuClick executes a context-menu item or dismisses the menu.
+// A right-click outside is allowed through so another heading can immediately
+// become the target without requiring a separate dismissing click.
+func (a *App) handleHeadingMenuClick(m tea.Mouse) (bool, tea.Model, tea.Cmd) {
+	if !a.headingMenu.visible {
+		return false, a, nil
+	}
+	x, y, width := a.headingMenuBounds()
+	inside := m.X >= x && m.X < x+width &&
+		m.Y >= y && m.Y < y+len(a.headingMenu.items)
+	if inside && m.Button == tea.MouseLeft {
+		a.headingMenu.selected = m.Y - y
+		action := a.headingMenu.items[a.headingMenu.selected].action
+		a.headingMenu.close()
+		model, cmd := a.execMenuAction(action)
+		return true, model, cmd
+	}
+
+	a.headingMenu.close()
+	if m.Button == tea.MouseRight {
+		return false, a, nil
+	}
+	return true, a, nil
 }
 
 // handleMenuClick consumes mouse clicks aimed at the menu bar or an open
@@ -1099,6 +1151,10 @@ func (a *App) scrollIntoView(p position) {
 }
 
 func (a *App) handleMouseClick(m tea.Mouse) {
+	if m.Button == tea.MouseRight {
+		a.openHeadingMenu(m)
+		return
+	}
 	if m.Button != tea.MouseLeft {
 		return
 	}
@@ -1151,6 +1207,37 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 	}
 }
 
+// openHeadingMenu selects the right-clicked row or column and opens the two
+// structural actions relevant to that heading. Selecting the heading first
+// lets the existing insert/delete handlers retain their undo and formula
+// retargeting behavior without a second context-specific mutation path.
+func (a *App) openHeadingMenu(m tea.Mouse) {
+	if m.Y == a.layout.headerY {
+		if col := a.layout.colAt(m.X); col > 0 {
+			_, maxRow := a.wb.UsedRange(a.sheet)
+			a.anchor = position{Col: col, Row: 1}
+			a.cursor = position{Col: col, Row: max(maxRow, 1)}
+			a.menuBar.close()
+			a.headingMenu.openAt(m.X, a.layout.headerY+1, []menuItem{
+				{label: "Insert Column Left", action: actInsertCols},
+				{label: "Delete Column", action: actDeleteCols},
+			})
+		}
+		return
+	}
+
+	if row := a.layout.rowAt(m.Y); row > 0 && m.X < a.layout.gutterW {
+		maxCol, _ := a.wb.UsedRange(a.sheet)
+		a.anchor = position{Col: 1, Row: row}
+		a.cursor = position{Col: max(maxCol, 1), Row: row}
+		a.menuBar.close()
+		a.headingMenu.openAt(a.layout.gutterW, m.Y, []menuItem{
+			{label: "Insert Row Above", action: actInsertRows},
+			{label: "Delete Row", action: actDeleteRows},
+		})
+	}
+}
+
 // extendTo grows the selection — or the pointed reference, while a formula
 // edit is picking one — toward the cell under a drag.
 func (a *App) extendTo(m tea.Mouse) {
@@ -1194,7 +1281,7 @@ func (a *App) View() tea.View {
 	b.WriteByte('\n')
 	b.WriteString(a.renderStatusBar(width))
 
-	v := tea.NewView(a.overlayAttributions(a.overlayDropdown(b.String())))
+	v := tea.NewView(a.overlayAttributions(a.overlayHeadingMenu(a.overlayDropdown(b.String()))))
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	v.WindowTitle = a.windowTitle()

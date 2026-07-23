@@ -105,7 +105,8 @@ Windows-Excel-style `Ctrl` bindings.
   does not edit where supported by Excelize, including styles, widths, other
   sheets, and content it cannot display.
 - **Mouse everywhere.** Click and drag to select, drag column edges in the
-  header to resize, click tabs, scroll with the wheel, use the menus.
+  header to resize, right-click row or column headings to insert/delete, click
+  tabs, scroll with the wheel, use the menus.
 
 ## Formula compatibility
 

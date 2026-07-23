@@ -179,6 +179,36 @@ type menuBar struct {
 	titleX [][2]int // x span of each title in the bar row
 }
 
+// headingContextMenu is the small action list anchored to a row or column
+// heading after a right-click.
+type headingContextMenu struct {
+	visible  bool
+	x        int
+	y        int
+	selected int
+	items    []menuItem
+}
+
+func (m *headingContextMenu) openAt(x, y int, items []menuItem) {
+	m.visible = true
+	m.x, m.y = x, y
+	m.selected = 0
+	m.items = append(m.items[:0], items...)
+}
+
+func (m *headingContextMenu) close() {
+	m.visible = false
+	m.selected = 0
+	m.items = m.items[:0]
+}
+
+func (m *headingContextMenu) moveSelection(delta int) {
+	if len(m.items) == 0 {
+		return
+	}
+	m.selected = (m.selected + delta + len(m.items)) % len(m.items)
+}
+
 func (m *menuBar) openMenu(i int) {
 	m.open = true
 	m.active = i
@@ -344,6 +374,57 @@ func (a *App) overlayDropdown(content string) string {
 			left += strings.Repeat(" ", short)
 		}
 		lines[y] = left + dl + ansi.TruncateLeft(line, x+w, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+// headingMenuBounds clamps the context menu to the visible terminal while
+// preserving its preferred attachment point beside or below the heading.
+func (a *App) headingMenuBounds() (x, y, width int) {
+	labelWidth := 0
+	for _, item := range a.headingMenu.items {
+		labelWidth = max(labelWidth, lipgloss.Width(item.label))
+	}
+	width = labelWidth + 2
+	screenWidth, screenHeight := max(a.width, 20), max(a.height, 7)
+	x = clamp(a.headingMenu.x, 0, max(screenWidth-width, 0))
+	y = clamp(a.headingMenu.y, 0, max(screenHeight-len(a.headingMenu.items), 0))
+	return x, y, width
+}
+
+func (a *App) renderHeadingMenu() []string {
+	_, _, width := a.headingMenuBounds()
+	lines := make([]string, 0, len(a.headingMenu.items))
+	for i, item := range a.headingMenu.items {
+		style := styleMenuItem
+		if i == a.headingMenu.selected {
+			style = styleMenuItemActive
+		}
+		padding := width - lipgloss.Width(item.label) - 2
+		lines = append(lines, style.Render(" "+item.label+strings.Repeat(" ", padding)+" "))
+	}
+	return lines
+}
+
+// overlayHeadingMenu splices the right-click menu into the rendered frame
+// without disturbing the grid beneath it.
+func (a *App) overlayHeadingMenu(content string) string {
+	if !a.headingMenu.visible {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	x, y, width := a.headingMenuBounds()
+	for i, menuLine := range a.renderHeadingMenu() {
+		lineIndex := y + i
+		if lineIndex >= len(lines) {
+			break
+		}
+		line := lines[lineIndex]
+		left := ansi.Truncate(line, x, "")
+		if short := x - ansi.StringWidth(left); short > 0 {
+			left += strings.Repeat(" ", short)
+		}
+		lines[lineIndex] = left + menuLine + ansi.TruncateLeft(line, x+width, "")
 	}
 	return strings.Join(lines, "\n")
 }

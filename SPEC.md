@@ -109,7 +109,8 @@ modes to learn.
 | `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next sheet |
 
 Mouse: click selects, drag extends, click+drag on headers selects whole
-rows/columns, wheel scrolls, click on sheet tabs switches sheets.
+rows/columns, right-click a row/column heading to insert or delete it, wheel
+scrolls, click on sheet tabs switches sheets.
 
 ### Commands
 

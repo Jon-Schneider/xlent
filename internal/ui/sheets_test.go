@@ -37,6 +37,49 @@ func TestClickingAddSheetButtonCreatesAndSwitchesToSheet(t *testing.T) {
 	}
 }
 
+func TestRightClickInactiveSheetTabRenamesWithoutActivatingIt(t *testing.T) {
+	app, wb := setupTestApp(t)
+	if err := wb.AddSheet("Data"); err != nil {
+		t.Fatal(err)
+	}
+	app.View()
+
+	dataTab := app.layout.tabX[1]
+	app.Update(tea.MouseClickMsg{X: dataTab[0], Y: app.layout.tabsY, Button: tea.MouseRight})
+
+	if app.sheet != "Sheet1" {
+		t.Fatalf("active sheet = %q after right-click, want Sheet1 unchanged", app.sheet)
+	}
+	if !app.headingMenu.visible {
+		t.Fatal("right-clicking a sheet tab must open its context menu")
+	}
+	if rendered := ansi.Strip(app.View().Content); !strings.Contains(rendered, "Rename Sheet…") {
+		t.Fatalf("sheet context menu missing Rename Sheet: %q", rendered)
+	}
+
+	menuX, menuY, _ := app.headingMenuBounds()
+	app.Update(tea.MouseClickMsg{X: menuX + 1, Y: menuY, Button: tea.MouseLeft})
+	if app.prompt.kind != promptRenameSheet || app.prompt.String() != "Data" {
+		t.Fatalf("rename prompt = (%v, %q), want Data sheet prompt", app.prompt.kind, app.prompt.String())
+	}
+	if app.sheet != "Sheet1" {
+		t.Fatalf("active sheet = %q after opening prompt, want Sheet1 unchanged", app.sheet)
+	}
+
+	for range "Data" {
+		press(t, app, tea.Key{Code: tea.KeyBackspace})
+	}
+	typeText(t, app, "Budget")
+	press(t, app, tea.Key{Code: tea.KeyEnter})
+
+	if got := wb.Sheets(); len(got) != 2 || got[0] != "Sheet1" || got[1] != "Budget" {
+		t.Fatalf("Sheets() = %v, want [Sheet1 Budget]", got)
+	}
+	if app.sheet != "Sheet1" {
+		t.Errorf("active sheet = %q after rename, want Sheet1 unchanged", app.sheet)
+	}
+}
+
 func TestRenameSheetPromptRenamesAndUndoRestores(t *testing.T) {
 	app, wb := setupTestApp(t)
 

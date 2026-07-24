@@ -33,11 +33,12 @@ const (
 
 // prompt is the one-line input that temporarily replaces the status bar.
 type prompt struct {
-	kind    promptKind
-	label   string
-	text    []rune
-	pos     int
-	pending pendingAction
+	kind        promptKind
+	label       string
+	text        []rune
+	pos         int
+	pending     pendingAction
+	sheetTarget string
 }
 
 func (p *prompt) active() bool {
@@ -53,6 +54,14 @@ func (p *prompt) open(kind promptKind, label, initial string) {
 	p.label = label
 	p.text = []rune(initial)
 	p.pos = len(p.text)
+	p.sheetTarget = ""
+}
+
+// openSheetRename keeps the clicked sheet attached to the prompt so renaming
+// an inactive tab never has to change the workbook's active sheet.
+func (p *prompt) openSheetRename(sheet string) {
+	p.open(promptRenameSheet, "Rename sheet: ", sheet)
+	p.sheetTarget = sheet
 }
 
 func (p *prompt) close() {

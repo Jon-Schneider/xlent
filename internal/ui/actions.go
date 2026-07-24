@@ -909,6 +909,7 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 	raw := a.prompt.String()
 	text := strings.TrimSpace(raw)
 	pending := a.prompt.pending
+	sheetTarget := a.prompt.sheetTarget
 	a.prompt.close()
 
 	switch kind {
@@ -974,21 +975,23 @@ func (a *App) submitPrompt() (tea.Model, tea.Cmd) {
 		a.createTable(text)
 
 	case promptRenameSheet:
-		a.renameSheet(text)
+		a.renameSheet(sheetTarget, text)
 	}
 	return a, nil
 }
 
-// renameSheet renames the active sheet as one snapshot-undoable command.
-func (a *App) renameSheet(newName string) {
-	oldName := a.sheet
+// renameSheet renames the requested sheet as one snapshot-undoable command.
+// The visible sheet changes only when it is itself the rename target.
+func (a *App) renameSheet(oldName, newName string) {
 	if newName == "" || newName == oldName {
 		return
 	}
 	if a.structuralOp("Rename Sheet", func() error {
 		return a.wb.RenameSheet(oldName, newName)
 	}) {
-		a.sheet = newName
+		if a.sheet == oldName {
+			a.sheet = newName
+		}
 		a.statusMsg = fmt.Sprintf("Renamed %s to %s", oldName, newName)
 	}
 }

@@ -570,10 +570,19 @@ func (a *App) handleHeadingMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		action := a.headingMenu.items[a.headingMenu.selected].action
+		sheetTarget := a.headingMenu.sheetTarget
 		a.headingMenu.close()
-		return a.execMenuAction(action)
+		return a.execHeadingMenuAction(action, sheetTarget)
 	}
 	return a, nil
+}
+
+func (a *App) execHeadingMenuAction(action menuAction, sheetTarget string) (tea.Model, tea.Cmd) {
+	if action == actRenameSheet && sheetTarget != "" {
+		a.prompt.openSheetRename(sheetTarget)
+		return a, nil
+	}
+	return a.execMenuAction(action)
 }
 
 // handleHeadingMenuClick executes a context-menu item or dismisses the menu.
@@ -589,8 +598,9 @@ func (a *App) handleHeadingMenuClick(m tea.Mouse) (bool, tea.Model, tea.Cmd) {
 	if inside && m.Button == tea.MouseLeft {
 		a.headingMenu.selected = m.Y - y
 		action := a.headingMenu.items[a.headingMenu.selected].action
+		sheetTarget := a.headingMenu.sheetTarget
 		a.headingMenu.close()
-		model, cmd := a.execMenuAction(action)
+		model, cmd := a.execHeadingMenuAction(action, sheetTarget)
 		return true, model, cmd
 	}
 
@@ -801,7 +811,7 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 	case actAddSheet:
 		a.addSheet()
 	case actRenameSheet:
-		a.prompt.open(promptRenameSheet, "Rename sheet: ", a.sheet)
+		a.prompt.openSheetRename(a.sheet)
 	case actDeleteSheet:
 		a.deleteSheet()
 	case actAbout:
@@ -1269,11 +1279,28 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 	}
 }
 
-// openHeadingMenu selects the right-clicked row or column and opens the two
-// structural actions relevant to that heading. Selecting the heading first
-// lets the existing insert/delete handlers retain their undo and formula
-// retargeting behavior without a second context-specific mutation path.
+// openHeadingMenu opens the action relevant to a right-clicked sheet tab
+// without activating it. For row and column headings it selects the heading
+// first, letting the existing insert/delete handlers retain their undo and
+// formula-retargeting behavior without a second mutation path.
 func (a *App) openHeadingMenu(m tea.Mouse) {
+	if m.Y == a.layout.tabsY {
+		for i, xr := range a.layout.tabX {
+			if m.X < xr[0] || m.X >= xr[1] {
+				continue
+			}
+			sheets := a.wb.Sheets()
+			if i < len(sheets) {
+				a.menuBar.close()
+				a.headingMenu.openForSheetAt(m.X, m.Y-1, sheets[i], []menuItem{
+					{label: "Rename Sheet…", action: actRenameSheet},
+				})
+			}
+			return
+		}
+		return
+	}
+
 	if m.Y == a.layout.headerY {
 		if col := a.layout.colAt(m.X); col > 0 {
 			_, maxRow := a.wb.UsedRange(a.sheet)

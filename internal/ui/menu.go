@@ -179,14 +179,16 @@ type menuBar struct {
 	titleX [][2]int // x span of each title in the bar row
 }
 
-// headingContextMenu is the small action list anchored to a row or column
-// heading after a right-click.
+// headingContextMenu is the small action list anchored to a row/column heading
+// or sheet tab after a right-click. sheetTarget is populated only for sheet
+// actions, which lets them operate without activating the clicked tab.
 type headingContextMenu struct {
-	visible  bool
-	x        int
-	y        int
-	selected int // highlighted item; -1 when the pointer is outside the menu
-	items    []menuItem
+	visible     bool
+	x           int
+	y           int
+	selected    int // highlighted item; -1 when the pointer is outside the menu
+	items       []menuItem
+	sheetTarget string
 }
 
 func (m *headingContextMenu) openAt(x, y int, items []menuItem) {
@@ -194,12 +196,19 @@ func (m *headingContextMenu) openAt(x, y int, items []menuItem) {
 	m.x, m.y = x, y
 	m.selected = 0
 	m.items = append(m.items[:0], items...)
+	m.sheetTarget = ""
+}
+
+func (m *headingContextMenu) openForSheetAt(x, y int, sheet string, items []menuItem) {
+	m.openAt(x, y, items)
+	m.sheetTarget = sheet
 }
 
 func (m *headingContextMenu) close() {
 	m.visible = false
 	m.selected = 0
 	m.items = m.items[:0]
+	m.sheetTarget = ""
 }
 
 func (m *headingContextMenu) moveSelection(delta int) {

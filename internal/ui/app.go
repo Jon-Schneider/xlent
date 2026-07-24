@@ -1231,6 +1231,9 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 				return
 			}
 		}
+		if m.X >= a.layout.addSheetX[0] && m.X < a.layout.addSheetX[1] {
+			a.addSheet()
+		}
 		return
 	}
 
@@ -1422,6 +1425,10 @@ func (a *App) renderTabs(width int) string {
 		a.layout.tabX = append(a.layout.tabX, [2]int{x, x + lipgloss.Width(label)})
 		x += lipgloss.Width(label)
 	}
+	addLabel := " + "
+	b.WriteString(styleTab.Render(addLabel))
+	a.layout.addSheetX = [2]int{x, x + lipgloss.Width(addLabel)}
+	x += lipgloss.Width(addLabel)
 	if pad := width - x; pad > 0 {
 		b.WriteString(styleTabBar.Render(strings.Repeat(" ", pad)))
 	}

@@ -1,10 +1,41 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 )
+
+func TestSheetRowRendersAddButtonAfterLastTab(t *testing.T) {
+	app, wb := setupTestApp(t)
+	if err := wb.AddSheet("Data"); err != nil {
+		t.Fatal(err)
+	}
+
+	tabs := ansi.Strip(app.renderTabs(app.width))
+	lastTab := strings.Index(tabs, "Data")
+	addButton := strings.Index(tabs, "+")
+	if lastTab < 0 || addButton < 0 || addButton < lastTab+len("Data") {
+		t.Fatalf("sheet row = %q, want + after the last sheet tab", tabs)
+	}
+}
+
+func TestClickingAddSheetButtonCreatesAndSwitchesToSheet(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.View()
+
+	button := app.layout.addSheetX
+	app.Update(tea.MouseClickMsg{X: button[0], Y: app.layout.tabsY, Button: tea.MouseLeft})
+
+	if got := app.wb.Sheets(); len(got) != 2 || got[1] != "Sheet2" {
+		t.Fatalf("sheets = %v, want [Sheet1 Sheet2]", got)
+	}
+	if app.sheet != "Sheet2" {
+		t.Errorf("active sheet = %q, want Sheet2", app.sheet)
+	}
+}
 
 func TestRenameSheetPromptRenamesAndUndoRestores(t *testing.T) {
 	app, wb := setupTestApp(t)

@@ -92,6 +92,7 @@ type gridLayout struct {
 	frozenCols int   // count of leading columns frozen in place
 	tabsY      int
 	tabX       [][2]int // x ranges of sheet tabs, parallel to workbook sheets
+	addSheetX  [2]int   // x range of the "+" button after the sheet tabs
 }
 
 // cellPlan is the per-cell render plan for one grid row. A whole row is planned

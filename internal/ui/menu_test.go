@@ -202,6 +202,57 @@ func TestMenuItemClickExecutesBeforeFirstRender(t *testing.T) {
 	}
 }
 
+func TestMouseoverHighlightsMenuItem(t *testing.T) {
+	app, _ := setupTestApp(t)
+	press(t, app, tea.Key{Code: tea.KeyF10})
+
+	quitItem := len(app.menus[0].items) - 1
+	dropX, _ := app.menuDropdownBounds()
+	app.Update(tea.MouseMotionMsg{X: dropX + 1, Y: 1 + quitItem})
+
+	if app.menuBar.selected != quitItem {
+		t.Fatalf("highlighted item = %d, want Quit at %d", app.menuBar.selected, quitItem)
+	}
+}
+
+func TestMouseoverSwitchesOpenTopLevelMenu(t *testing.T) {
+	app, _ := setupTestApp(t)
+	press(t, app, tea.Key{Code: tea.KeyF10})
+
+	editStart, _ := app.menuTitleBounds(1)
+	app.Update(tea.MouseMotionMsg{X: editStart, Y: 0})
+
+	if app.menuBar.active != 1 {
+		t.Fatalf("active menu = %d, want Edit at 1", app.menuBar.active)
+	}
+	if app.menuBar.selected != -1 {
+		t.Fatalf("highlighted item = %d, want none while pointer is on title", app.menuBar.selected)
+	}
+}
+
+func TestMenuKeyboardNavigationResumesAfterPointerLeaves(t *testing.T) {
+	app, _ := setupTestApp(t)
+	press(t, app, tea.Key{Code: tea.KeyF10})
+
+	app.Update(tea.MouseMotionMsg{X: app.width - 1, Y: app.height - 1})
+	if app.menuBar.selected != -1 {
+		t.Fatalf("highlighted item = %d, want none outside menu", app.menuBar.selected)
+	}
+
+	press(t, app, tea.Key{Code: tea.KeyDown})
+	if app.menuBar.selected != 0 {
+		t.Fatalf("highlighted item after Down = %d, want first item", app.menuBar.selected)
+	}
+}
+
+func TestViewEnablesPassiveMouseMotion(t *testing.T) {
+	app, _ := setupTestApp(t)
+
+	if got := app.View().MouseMode; got != tea.MouseModeAllMotion {
+		t.Fatalf("mouse mode = %v, want all-motion mode for passive hover", got)
+	}
+}
+
 func TestCtrlNWithDirtyWorkbookPromptsBeforeReplacing(t *testing.T) {
 	app, _ := setupTestApp(t)
 

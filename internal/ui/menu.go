@@ -174,7 +174,7 @@ func defaultMenus() []menu {
 type menuBar struct {
 	open     bool
 	active   int // which menu is open / highlighted
-	selected int // highlighted item within the open menu
+	selected int // highlighted item within the open menu; -1 when the pointer is outside it
 
 	titleX [][2]int // x span of each title in the bar row
 }
@@ -185,7 +185,7 @@ type headingContextMenu struct {
 	visible  bool
 	x        int
 	y        int
-	selected int
+	selected int // highlighted item; -1 when the pointer is outside the menu
 	items    []menuItem
 }
 
@@ -203,10 +203,7 @@ func (m *headingContextMenu) close() {
 }
 
 func (m *headingContextMenu) moveSelection(delta int) {
-	if len(m.items) == 0 {
-		return
-	}
-	m.selected = (m.selected + delta + len(m.items)) % len(m.items)
+	m.selected = nextSelectableMenuItem(m.items, m.selected, delta)
 }
 
 func (m *menuBar) openMenu(i int) {
@@ -222,17 +219,31 @@ func (m *menuBar) close() {
 
 // moveSelection moves the highlight up or down, skipping dividers.
 func (m *menuBar) moveSelection(items []menuItem, delta int) {
+	m.selected = nextSelectableMenuItem(items, m.selected, delta)
+}
+
+// nextSelectableMenuItem finds the next non-divider entry. A selection of -1
+// occurs when the pointer leaves a menu; keyboard navigation resumes from the
+// first or last item depending on its direction.
+func nextSelectableMenuItem(items []menuItem, selected, delta int) int {
 	if len(items) == 0 {
-		return
+		return -1
 	}
-	i := m.selected
+	i := selected
+	if i < 0 || i >= len(items) {
+		if delta > 0 {
+			i = -1
+		} else {
+			i = 0
+		}
+	}
 	for range items {
 		i = (i + delta + len(items)) % len(items)
 		if !items[i].divider {
-			m.selected = i
-			return
+			return i
 		}
 	}
+	return -1
 }
 
 var (

@@ -119,3 +119,19 @@ func TestRowHeadingContextMenuDeletesClickedRow(t *testing.T) {
 		t.Errorf("A4 = %q, want lonely shifted up from A5", got)
 	}
 }
+
+func TestMouseoverHighlightsHeadingContextMenuItem(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.Update(tea.MouseClickMsg{
+		X:      app.layout.colX[1] + 1,
+		Y:      app.layout.headerY,
+		Button: tea.MouseRight,
+	})
+
+	menuX, menuY, _ := app.headingMenuBounds()
+	app.Update(tea.MouseMotionMsg{X: menuX + 1, Y: menuY + 1})
+
+	if app.headingMenu.selected != 1 {
+		t.Fatalf("highlighted item = %d, want Delete Column at 1", app.headingMenu.selected)
+	}
+}

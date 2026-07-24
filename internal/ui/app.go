@@ -185,8 +185,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.dragColumnWidth(tea.Mouse(msg).X)
 			return a, nil
 		}
-		if tea.Mouse(msg).Button == tea.MouseLeft {
-			a.extendTo(tea.Mouse(msg))
+		m := tea.Mouse(msg)
+		if a.headingMenu.visible {
+			a.handleHeadingMenuMouseMotion(m)
+			return a, nil
+		}
+		if a.menuBar.open {
+			a.handleMenuMouseMotion(m)
+			return a, nil
+		}
+		if m.Button == tea.MouseLeft {
+			a.extendTo(m)
 		}
 
 	case tea.MouseReleaseMsg:
@@ -536,6 +545,9 @@ func (a *App) handleMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "down":
 		a.menuBar.moveSelection(items, 1)
 	case "enter", "space":
+		if a.menuBar.selected < 0 || a.menuBar.selected >= len(items) {
+			return a, nil
+		}
 		action := items[a.menuBar.selected].action
 		a.menuBar.close()
 		return a.execMenuAction(action)
@@ -554,6 +566,9 @@ func (a *App) handleHeadingMenuKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "down":
 		a.headingMenu.moveSelection(1)
 	case "enter", "space":
+		if a.headingMenu.selected < 0 || a.headingMenu.selected >= len(a.headingMenu.items) {
+			return a, nil
+		}
 		action := a.headingMenu.items[a.headingMenu.selected].action
 		a.headingMenu.close()
 		return a.execMenuAction(action)
@@ -584,6 +599,20 @@ func (a *App) handleHeadingMenuClick(m tea.Mouse) (bool, tea.Model, tea.Cmd) {
 		return false, a, nil
 	}
 	return true, a, nil
+}
+
+// handleHeadingMenuMouseMotion moves the context-menu highlight to the item
+// under the pointer without acting on the underlying grid.
+func (a *App) handleHeadingMenuMouseMotion(m tea.Mouse) {
+	a.headingMenu.selected = -1
+	x, y, width := a.headingMenuBounds()
+	if m.X < x || m.X >= x+width || m.Y < y || m.Y >= y+len(a.headingMenu.items) {
+		return
+	}
+	item := m.Y - y
+	if !a.headingMenu.items[item].divider {
+		a.headingMenu.selected = item
+	}
 }
 
 // handleMenuClick consumes mouse clicks aimed at the menu bar or an open
@@ -634,6 +663,36 @@ func (a *App) handleMenuClick(m tea.Mouse) (bool, tea.Model, tea.Cmd) {
 	// Click anywhere else closes the menu and is swallowed.
 	a.menuBar.close()
 	return true, a, nil
+}
+
+// handleMenuMouseMotion follows the pointer within an open menu. Moving over
+// another title switches dropdowns, while moving over an actionable row moves
+// the item highlight there.
+func (a *App) handleMenuMouseMotion(m tea.Mouse) {
+	a.menuBar.selected = -1
+	if m.Y == 0 {
+		for i := range a.menus {
+			start, end := a.menuTitleBounds(i)
+			if m.X >= start && m.X < end {
+				if a.menuBar.active != i {
+					a.menuBar.openMenu(i)
+					a.menuBar.selected = -1
+				}
+				return
+			}
+		}
+		return
+	}
+
+	line := m.Y - 1
+	dropX, dropW := a.menuDropdownBounds()
+	items := a.menus[a.menuBar.active].items
+	if line < 0 || line >= len(items) || m.X < dropX || m.X >= dropX+dropW {
+		return
+	}
+	if !items[line].divider {
+		a.menuBar.selected = line
+	}
 }
 
 // execMenuAction routes a menu choice to the same handlers the shortcuts
@@ -1283,7 +1342,9 @@ func (a *App) View() tea.View {
 
 	v := tea.NewView(a.overlayAttributions(a.overlayHeadingMenu(a.overlayDropdown(b.String()))))
 	v.AltScreen = true
-	v.MouseMode = tea.MouseModeCellMotion
+	// Passive motion is required for menu hover; cell-motion mode only reports
+	// movement while a button is held and is therefore limited to dragging.
+	v.MouseMode = tea.MouseModeAllMotion
 	v.WindowTitle = a.windowTitle()
 	a.placeCursor(&v)
 	return v

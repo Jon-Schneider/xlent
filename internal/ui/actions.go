@@ -65,6 +65,51 @@ func (a *App) cancelEdit() {
 // clearSelection blanks every cell in the selection as one undoable command.
 func (a *App) clearSelection() {
 	sel := a.selectionRect()
+	if len(a.selectionOverrides) > 0 {
+		areas := a.selectedCellRects()
+		if len(areas) == 0 {
+			return
+		}
+		if a.selectionKind != selectionCells {
+			if a.wb.SheetProtected(a.sheet) {
+				a.statusMsg = fmt.Sprintf("%s: sheet is protected", a.sheet)
+				return
+			}
+		} else {
+			for _, area := range areas {
+				if err := a.wb.CheckRangeEditable(a.sheet, area.MinCol, area.MinRow, area.MaxCol, area.MaxRow); err != nil {
+					a.statusMsg = err.Error()
+					return
+				}
+			}
+		}
+		stored, err := a.selectedStoredPositions()
+		if err != nil {
+			a.statusMsg = err.Error()
+			return
+		}
+		cells := make([]string, 0, len(stored))
+		for _, p := range stored {
+			cell := p.cellName()
+			if a.wb.RawContent(a.sheet, cell) != "" {
+				cells = append(cells, cell)
+			}
+		}
+		if len(cells) == 0 {
+			return
+		}
+		if a.structuralOp("Clear Contents", func() error {
+			for _, cell := range cells {
+				if err := a.wb.SetCell(a.sheet, cell, ""); err != nil {
+					return err
+				}
+			}
+			return nil
+		}) {
+			a.statusMsg = "Cleared " + a.selectionLabel()
+		}
+		return
+	}
 	if a.selectionKind != selectionCells {
 		if a.wb.SheetProtected(a.sheet) {
 			a.statusMsg = fmt.Sprintf("%s: sheet is protected", a.sheet)
@@ -124,6 +169,9 @@ func (a *App) clearSelection() {
 // clipboard as TSV (OSC 52).
 func (a *App) copySelection(cut bool) tea.Cmd {
 	sel := a.selectionRect()
+	if len(a.selectionOverrides) > 0 {
+		return a.copyMultiSelection(cut)
+	}
 	if a.selectionKind != selectionCells {
 		return a.copyAxisSelection(cut, sel)
 	}
@@ -177,6 +225,125 @@ func (a *App) copySelection(cut bool) tea.Cmd {
 		a.statusMsg = "Copied " + sel.String()
 	}
 	return tea.SetClipboard(clipboard.EncodeTSV(display))
+}
+
+func (a *App) copyMultiSelection(cut bool) tea.Cmd {
+	block, err := a.captureMultiBlock(cut)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return nil
+	}
+	if len(block.Areas) == 0 {
+		a.statusMsg = "Nothing selected"
+		return nil
+	}
+	a.register.Put(block)
+	verb := "Copied "
+	if cut {
+		verb = "Cut "
+	}
+	a.statusMsg = verb + a.selectionLabel()
+	rows, safe := multiAreaTSV(block)
+	if !safe {
+		a.statusMsg += " (internal clipboard only)"
+		return nil
+	}
+	return tea.SetClipboard(clipboard.EncodeTSV(rows))
+}
+
+func (a *App) captureMultiBlock(cut bool) (clipboard.Block, error) {
+	areas := a.selectedCellRects()
+	bounds, ok := selectionBounds(areas)
+	if !ok {
+		return clipboard.Block{Kind: clipboard.BlockMulti, SourceSheet: a.sheet, Cut: cut}, nil
+	}
+	block := clipboard.Block{
+		Kind: clipboard.BlockMulti, SourceSheet: a.sheet,
+		SourceCell: engine.CellName(bounds.MinCol, bounds.MinRow), Cut: cut,
+	}
+	for _, area := range areas {
+		block.Areas = append(block.Areas, clipboard.Area{
+			MinCol: area.MinCol - bounds.MinCol, MinRow: area.MinRow - bounds.MinRow,
+			MaxCol: area.MaxCol - bounds.MinCol, MaxRow: area.MaxRow - bounds.MinRow,
+		})
+	}
+
+	positions, err := a.selectedStoredPositions()
+	if err != nil {
+		return clipboard.Block{}, err
+	}
+	for _, p := range positions {
+		cell := p.cellName()
+		metadata := a.wb.CellMetadataAt(a.sheet, cell)
+		metadata.Validations = nil
+		block.SparseCells = append(block.SparseCells, clipboard.SparseCell{
+			Col: p.Col - bounds.MinCol, Row: p.Row - bounds.MinRow,
+			Content: a.wb.RawContent(a.sheet, cell), Display: a.wb.DisplayValue(a.sheet, cell),
+			Metadata: metadata,
+		})
+	}
+
+	logicalBounds := engine.Ref{Sheet: a.sheet, MinCol: bounds.MinCol, MinRow: bounds.MinRow, MaxCol: bounds.MaxCol, MaxRow: bounds.MaxRow}
+	for _, merged := range a.wb.MergedRangesOverlapping(a.sheet, logicalBounds) {
+		mergedRect := rect{MinCol: merged.MinCol, MinRow: merged.MinRow, MaxCol: merged.MaxCol, MaxRow: merged.MaxRow}
+		intersects := false
+		contained := false
+		for _, area := range areas {
+			intersects = intersects || rectsOverlap(area, mergedRect)
+			contained = contained || rectContainsRect(area, mergedRect)
+		}
+		if !intersects {
+			continue
+		}
+		if !contained {
+			return clipboard.Block{}, fmt.Errorf("merged range %s:%s crosses a selection boundary",
+				engine.CellName(merged.MinCol, merged.MinRow), engine.CellName(merged.MaxCol, merged.MaxRow))
+		}
+		block.Merges = append(block.Merges, clipboard.MergedRange{
+			MinCol: merged.MinCol - bounds.MinCol, MinRow: merged.MinRow - bounds.MinRow,
+			MaxCol: merged.MaxCol - bounds.MinCol, MaxRow: merged.MaxRow - bounds.MinRow,
+		})
+	}
+	for _, area := range areas {
+		ref := engine.Ref{Sheet: a.sheet, MinCol: area.MinCol, MinRow: area.MinRow, MaxCol: area.MaxCol, MaxRow: area.MaxRow}
+		validations, err := a.wb.ValidationsInRange(a.sheet, ref)
+		if err != nil {
+			return clipboard.Block{}, err
+		}
+		for index := range validations {
+			validations[index].MinCol -= bounds.MinCol
+			validations[index].MaxCol -= bounds.MinCol
+			validations[index].MinRow -= bounds.MinRow
+			validations[index].MaxRow -= bounds.MinRow
+		}
+		block.Validations = append(block.Validations, validations...)
+	}
+	return block, nil
+}
+
+func rectsOverlap(left, right rect) bool {
+	return left.MinCol <= right.MaxCol && right.MinCol <= left.MaxCol &&
+		left.MinRow <= right.MaxRow && right.MinRow <= left.MaxRow
+}
+
+func multiAreaTSV(block clipboard.Block) ([][]string, bool) {
+	rows, cols := block.Rows(), block.Cols()
+	if rows <= 0 || cols <= 0 {
+		return nil, true
+	}
+	if rows > statsCellLimit || cols > statsCellLimit || rows*cols > statsCellLimit {
+		return nil, false
+	}
+	out := make([][]string, rows)
+	for row := range out {
+		out[row] = make([]string, cols)
+	}
+	for _, cell := range block.SparseCells {
+		if cell.Row >= 0 && cell.Row < rows && cell.Col >= 0 && cell.Col < cols {
+			out[cell.Row][cell.Col] = cell.Display
+		}
+	}
+	return out, true
 }
 
 // copyAxisSelection captures only physical cells plus row/column properties.
@@ -314,6 +481,10 @@ func (a *App) pasteFromRegister() {
 		a.statusMsg = "Nothing to paste"
 		return
 	}
+	if block.Kind == clipboard.BlockMulti {
+		a.pasteMultiSelection(block)
+		return
+	}
 	if block.Kind != clipboard.BlockCells {
 		a.pasteAxisReplacement(block)
 		return
@@ -417,6 +588,175 @@ func (a *App) pasteFromRegister() {
 	if block.Cut {
 		a.register.Clear()
 	}
+}
+
+func (a *App) pasteMultiSelection(block clipboard.Block) {
+	sourceCol, sourceRow, err := engine.ParseCellName(block.SourceCell)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	targetCol, targetRow := a.cursor.Col, a.cursor.Row
+	dCol, dRow := targetCol-sourceCol, targetRow-sourceRow
+	sourceAreas, err := multiAreaRefs(block, block.SourceSheet, sourceCol, sourceRow)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	destinationAreas, err := multiAreaRefs(block, a.sheet, targetCol, targetRow)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	if a.wb.SheetProtected(a.sheet) || block.Cut && a.wb.SheetProtected(block.SourceSheet) {
+		a.statusMsg = "Protected sheet blocks multi-area paste"
+		return
+	}
+	if err := a.preflightMultiAreaMerges(a.sheet, destinationAreas); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	if block.Cut {
+		if err := a.preflightMultiAreaMerges(block.SourceSheet, sourceAreas); err != nil {
+			a.statusMsg = err.Error()
+			return
+		}
+	}
+
+	ok := a.structuralOp("Paste", func() error {
+		for _, area := range destinationAreas {
+			if err := a.unmergeContained(area); err != nil {
+				return err
+			}
+			if err := a.wb.ReplaceValidationsInRange(area.Sheet, area, nil); err != nil {
+				return err
+			}
+			if err := a.wb.ClearStoredRange(area.Sheet, area); err != nil {
+				return err
+			}
+		}
+		if block.Cut {
+			for _, area := range sourceAreas {
+				if err := a.unmergeContained(area); err != nil {
+					return err
+				}
+				if err := a.wb.ReplaceValidationsInRange(area.Sheet, area, nil); err != nil {
+					return err
+				}
+				if err := a.wb.ClearStoredRange(area.Sheet, area); err != nil {
+					return err
+				}
+			}
+		}
+
+		for _, sparse := range block.SparseCells {
+			col, row := targetCol+sparse.Col, targetRow+sparse.Row
+			content := sparse.Content
+			if !block.Cut && strings.HasPrefix(content, "=") {
+				content = engine.AdjustFormula(content, dCol, dRow)
+			}
+			cell := engine.CellName(col, row)
+			if err := a.wb.SetCell(a.sheet, cell, content); err != nil {
+				return err
+			}
+			if err := a.wb.ApplyCellMetadata(a.sheet, cell, sparse.Metadata); err != nil {
+				return err
+			}
+		}
+		for _, merged := range block.Merges {
+			ref := engine.Ref{Sheet: a.sheet,
+				MinCol: targetCol + merged.MinCol, MinRow: targetRow + merged.MinRow,
+				MaxCol: targetCol + merged.MaxCol, MaxRow: targetRow + merged.MaxRow}
+			if err := a.wb.MergeRange(a.sheet, ref); err != nil {
+				return err
+			}
+		}
+		for index, area := range destinationAreas {
+			validations := multiAreaValidations(block, block.Areas[index], targetCol, targetRow, !block.Cut, dCol, dRow)
+			if err := a.wb.ReplaceValidationsInRange(a.sheet, area, validations); err != nil {
+				return err
+			}
+		}
+		if block.Cut {
+			for _, source := range sourceAreas {
+				move := engine.MoveSpec{From: source, ToSheet: a.sheet, DCol: dCol, DRow: dRow}
+				if _, err := a.wb.RetargetReferences(move); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if !ok {
+		return
+	}
+	a.statusMsg = "Pasted multiple selection"
+	if block.Cut {
+		a.register.Clear()
+	}
+}
+
+func multiAreaRefs(block clipboard.Block, sheet string, originCol, originRow int) ([]engine.Ref, error) {
+	refs := make([]engine.Ref, 0, len(block.Areas))
+	for _, area := range block.Areas {
+		ref := engine.Ref{Sheet: sheet,
+			MinCol: originCol + area.MinCol, MinRow: originRow + area.MinRow,
+			MaxCol: originCol + area.MaxCol, MaxRow: originRow + area.MaxRow}
+		if ref.MinCol < 1 || ref.MinRow < 1 || ref.MaxCol > engine.MaxCols || ref.MaxRow > engine.MaxRows {
+			return nil, errors.New("multi-area paste would exceed the worksheet boundary")
+		}
+		refs = append(refs, ref)
+	}
+	return refs, nil
+}
+
+func (a *App) preflightMultiAreaMerges(sheet string, areas []engine.Ref) error {
+	seen := make(map[engine.Ref]struct{})
+	for _, area := range areas {
+		for _, merged := range a.wb.MergedRangesOverlapping(sheet, area) {
+			if _, ok := seen[merged]; ok {
+				continue
+			}
+			seen[merged] = struct{}{}
+			contained := false
+			for _, selected := range areas {
+				if selected.MinCol <= merged.MinCol && selected.MinRow <= merged.MinRow &&
+					selected.MaxCol >= merged.MaxCol && selected.MaxRow >= merged.MaxRow {
+					contained = true
+					break
+				}
+			}
+			if !contained {
+				return fmt.Errorf("merged range %s:%s crosses a selection boundary",
+					engine.CellName(merged.MinCol, merged.MinRow), engine.CellName(merged.MaxCol, merged.MaxRow))
+			}
+		}
+	}
+	return nil
+}
+
+func multiAreaValidations(block clipboard.Block, area clipboard.Area, targetCol, targetRow int, adjustCopy bool, dCol, dRow int) []document.RangeValidation {
+	var validations []document.RangeValidation
+	for _, source := range block.Validations {
+		if source.MinCol < area.MinCol || source.MinRow < area.MinRow || source.MaxCol > area.MaxCol || source.MaxRow > area.MaxRow {
+			continue
+		}
+		validation := source
+		validation.MinCol += targetCol
+		validation.MaxCol += targetCol
+		validation.MinRow += targetRow
+		validation.MaxRow += targetRow
+		if source.Rule != nil {
+			rule := *source.Rule
+			if adjustCopy {
+				rule.Formula1 = engine.AdjustFormula(rule.Formula1, dCol, dRow)
+				rule.Formula2 = engine.AdjustFormula(rule.Formula2, dCol, dRow)
+			}
+			validation.Rule = &rule
+		}
+		validations = append(validations, validation)
+	}
+	return validations
 }
 
 // pasteAxisReplacement replaces complete destination rows or columns using a
@@ -598,7 +938,7 @@ func (a *App) unmergeContained(r engine.Ref) error {
 // always inserts; a same-sheet cut is routed through the reorder path.
 func (a *App) insertAxisPayload() {
 	block, ok := a.register.Get()
-	if !ok || block.Kind == clipboard.BlockCells || block.Kind == clipboard.BlockSheet {
+	if !ok || block.Kind == clipboard.BlockCells || block.Kind == clipboard.BlockSheet || block.Kind == clipboard.BlockMulti {
 		a.statusMsg = "No row or column payload to insert"
 		return
 	}
@@ -923,6 +1263,7 @@ func (a *App) selectMovedAxes(kind clipboard.BlockKind, start, count int) {
 }
 
 func (a *App) selectMovedAxesWithActive(kind clipboard.BlockKind, start, count, activeOffset int) {
+	a.clearSelectionOverrides()
 	activeOffset = clamp(activeOffset, 0, count-1)
 	if kind == clipboard.BlockRows {
 		a.cursor.Row = start + activeOffset
@@ -961,6 +1302,10 @@ func (a *App) pasteSpecial(mode pasteMode) {
 	block, ok := a.register.Get()
 	if !ok {
 		a.statusMsg = "Nothing to paste"
+		return
+	}
+	if block.Kind == clipboard.BlockMulti {
+		a.statusMsg = "Paste Special is not supported for multiple selections"
 		return
 	}
 	switch mode {
@@ -1162,6 +1507,9 @@ func (a *App) structuralOp(label string, op func() error) bool {
 
 // insertRows inserts blank rows above the selection, one per selected row.
 func (a *App) insertRows() {
+	if !a.requireContiguousSelection("Insert rows") {
+		return
+	}
 	if a.selectionKind == selectionColumns || a.selectionKind == selectionSheet {
 		a.statusMsg = "Select rows to insert rows"
 		return
@@ -1178,6 +1526,9 @@ func (a *App) insertRows() {
 // insertCols inserts blank columns left of the selection, one per selected
 // column.
 func (a *App) insertCols() {
+	if !a.requireContiguousSelection("Insert columns") {
+		return
+	}
 	if a.selectionKind == selectionRows || a.selectionKind == selectionSheet {
 		a.statusMsg = "Select columns to insert columns"
 		return
@@ -1194,6 +1545,9 @@ func (a *App) insertCols() {
 // deleteRows removes every row the selection touches. Formulas that referenced
 // the deleted rows resolve to #REF! (handled in RemoveRows), matching Excel.
 func (a *App) deleteRows() {
+	if !a.requireContiguousSelection("Delete rows") {
+		return
+	}
 	if a.selectionKind == selectionColumns || a.selectionKind == selectionSheet {
 		a.statusMsg = "Select rows to delete rows"
 		return
@@ -1217,6 +1571,9 @@ func (a *App) deleteRows() {
 
 // deleteCols removes every column the selection touches.
 func (a *App) deleteCols() {
+	if !a.requireContiguousSelection("Delete columns") {
+		return
+	}
 	if a.selectionKind == selectionRows || a.selectionKind == selectionSheet {
 		a.statusMsg = "Select columns to delete columns"
 		return
@@ -1243,6 +1600,46 @@ func (a *App) deleteCols() {
 // snapshot like structural changes do).
 func (a *App) applyNumberFormat(f document.NumberFormat, label string) {
 	sel := a.selectionRect()
+	if len(a.selectionOverrides) > 0 {
+		areas := a.selectedCellRects()
+		if len(areas) == 0 {
+			return
+		}
+		excludedFormats := make(map[position]document.NumberFormat)
+		if a.selectionKind != selectionCells {
+			for p := range a.excludedPrimaryCells() {
+				style := a.wb.CellStyleAt(a.sheet, p.cellName())
+				excludedFormats[p] = document.NumberFormat{ID: style.NumFmtID, Custom: style.NumFmtCustom}
+			}
+		}
+		if a.structuralOp("Format "+label, func() error {
+			if a.selectionKind == selectionCells {
+				for _, area := range areas {
+					if err := a.wb.SetNumberFormat(a.sheet, area.MinCol, area.MinRow, area.MaxCol, area.MaxRow, f); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if err := a.setPrimaryAxisNumberFormat(sel, f); err != nil {
+				return err
+			}
+			for p, oldFormat := range excludedFormats {
+				if err := a.wb.SetNumberFormat(a.sheet, p.Col, p.Row, p.Col, p.Row, oldFormat); err != nil {
+					return err
+				}
+			}
+			for _, p := range a.addedSelectionCells() {
+				if err := a.wb.SetNumberFormat(a.sheet, p.Col, p.Row, p.Col, p.Row, f); err != nil {
+					return err
+				}
+			}
+			return nil
+		}) {
+			a.statusMsg = "Formatted " + a.selectionLabel() + " as " + label
+		}
+		return
+	}
 	if a.structuralOp("Format "+label, func() error {
 		switch a.selectionKind {
 		case selectionColumns:
@@ -1259,10 +1656,68 @@ func (a *App) applyNumberFormat(f document.NumberFormat, label string) {
 	}
 }
 
+func (a *App) setPrimaryAxisNumberFormat(sel rect, f document.NumberFormat) error {
+	switch a.selectionKind {
+	case selectionColumns:
+		return a.wb.SetAxisNumberFormat(a.sheet, engine.AxisCol, sel.MinCol, sel.MaxCol, f)
+	case selectionRows:
+		return a.wb.SetAxisNumberFormat(a.sheet, engine.AxisRow, sel.MinRow, sel.MaxRow, f)
+	case selectionSheet:
+		return a.wb.SetAxisNumberFormat(a.sheet, engine.AxisCol, 1, engine.MaxCols, f)
+	default:
+		return nil
+	}
+}
+
 // toggleFontStyle toggles bold/italic/underline over the selection, also as
 // a snapshot-undoable command.
 func (a *App) toggleFontStyle(attr document.FontStyle, label string) {
 	sel := a.selectionRect()
+	if len(a.selectionOverrides) > 0 {
+		areas := a.selectedCellRects()
+		if len(areas) == 0 {
+			return
+		}
+		allHave, err := a.multiSelectionHasFontStyle(areas, attr)
+		if err != nil {
+			a.statusMsg = err.Error()
+			return
+		}
+		target := !allHave
+		excludedStates := make(map[position]bool)
+		if a.selectionKind != selectionCells {
+			for p := range a.excludedPrimaryCells() {
+				excludedStates[p] = a.wb.CellHasFontStyle(a.sheet, p.cellName(), attr)
+			}
+		}
+		if a.structuralOp(label, func() error {
+			if a.selectionKind == selectionCells {
+				for _, area := range areas {
+					if err := a.wb.SetFontStyle(a.sheet, area.MinCol, area.MinRow, area.MaxCol, area.MaxRow, attr, target); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if err := a.setPrimaryAxisFontStyle(sel, attr, target); err != nil {
+				return err
+			}
+			for p, oldState := range excludedStates {
+				if err := a.wb.SetFontStyle(a.sheet, p.Col, p.Row, p.Col, p.Row, attr, oldState); err != nil {
+					return err
+				}
+			}
+			for _, p := range a.addedSelectionCells() {
+				if err := a.wb.SetFontStyle(a.sheet, p.Col, p.Row, p.Col, p.Row, attr, target); err != nil {
+					return err
+				}
+			}
+			return nil
+		}) {
+			a.statusMsg = label + " " + a.selectionLabel()
+		}
+		return
+	}
 	if a.structuralOp(label, func() error {
 		switch a.selectionKind {
 		case selectionColumns:
@@ -1279,10 +1734,72 @@ func (a *App) toggleFontStyle(attr document.FontStyle, label string) {
 	}
 }
 
+func (a *App) multiSelectionHasFontStyle(areas []rect, attr document.FontStyle) (bool, error) {
+	if a.selectionKind == selectionCells {
+		for _, area := range areas {
+			for row := area.MinRow; row <= area.MaxRow; row++ {
+				for col := area.MinCol; col <= area.MaxCol; col++ {
+					if !a.wb.CellHasFontStyle(a.sheet, engine.CellName(col, row), attr) {
+						return false, nil
+					}
+				}
+			}
+		}
+		return true, nil
+	}
+
+	excluded := make(map[document.StoredCell]struct{})
+	for p := range a.excludedPrimaryCells() {
+		excluded[document.StoredCell{Col: p.Col, Row: p.Row}] = struct{}{}
+	}
+	sel := a.selectionRect()
+	axis := engine.AxisCol
+	start, end := 1, engine.MaxCols
+	if a.selectionKind == selectionRows {
+		axis, start, end = engine.AxisRow, sel.MinRow, sel.MaxRow
+	} else if a.selectionKind == selectionColumns {
+		start, end = sel.MinCol, sel.MaxCol
+	}
+	allHave, err := a.wb.AxisHasFontStyle(a.sheet, axis, start, end, attr, excluded)
+	if err != nil || !allHave {
+		return allHave, err
+	}
+	for _, p := range a.addedSelectionCells() {
+		if !a.wb.CellHasFontStyle(a.sheet, p.cellName(), attr) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func (a *App) setPrimaryAxisFontStyle(sel rect, attr document.FontStyle, target bool) error {
+	switch a.selectionKind {
+	case selectionColumns:
+		return a.wb.SetAxisFontStyle(a.sheet, engine.AxisCol, sel.MinCol, sel.MaxCol, attr, target)
+	case selectionRows:
+		return a.wb.SetAxisFontStyle(a.sheet, engine.AxisRow, sel.MinRow, sel.MaxRow, attr, target)
+	case selectionSheet:
+		return a.wb.SetAxisFontStyle(a.sheet, engine.AxisCol, 1, engine.MaxCols, attr, target)
+	default:
+		return nil
+	}
+}
+
+func (a *App) requireContiguousSelection(action string) bool {
+	if len(a.selectionOverrides) == 0 {
+		return true
+	}
+	a.statusMsg = action + " requires a contiguous selection"
+	return false
+}
+
 // sortSelection sorts the selected rows by the active column. A single-cell
 // selection expands to the whole used range first, so sorting "just works"
 // from anywhere inside a data block. Sorting is snapshot-undoable.
 func (a *App) sortSelection(ascending bool) {
+	if !a.requireContiguousSelection("Sort") {
+		return
+	}
 	sel := rectBetween(a.anchor, a.cursor)
 	keyCol := a.cursor.Col
 	if sel.isSingleCell() {
@@ -1362,6 +1879,9 @@ func (a *App) likelyHeaderRow(sel rect) bool {
 // the selection, shifting relative formula references like a copy/paste
 // (Excel's Ctrl+D). One undoable command.
 func (a *App) fillDown() {
+	if !a.requireContiguousSelection("Fill down") {
+		return
+	}
 	sel := rectBetween(a.anchor, a.cursor)
 	if sel.MinRow == sel.MaxRow {
 		return
@@ -1384,6 +1904,9 @@ func (a *App) fillDown() {
 // fillRight copies the leftmost cell of each selected row across the rest of
 // the selection (Excel's Ctrl+R).
 func (a *App) fillRight() {
+	if !a.requireContiguousSelection("Fill right") {
+		return
+	}
 	sel := rectBetween(a.anchor, a.cursor)
 	if sel.MinCol == sel.MaxCol {
 		return
@@ -1426,6 +1949,9 @@ func (a *App) fillCell(edits []undo.CellEdit, col, row int, src string, dCol, dR
 // inferred from the first two cells along the fill axis (the taller dimension);
 // a single seed cell steps by 1. Non-numeric seeds fall back to filling.
 func (a *App) fillSeries() {
+	if !a.requireContiguousSelection("Fill series") {
+		return
+	}
 	sel := rectBetween(a.anchor, a.cursor)
 	if sel.isSingleCell() {
 		return
@@ -1491,6 +2017,9 @@ func (a *App) defineName(name string) {
 	if name == "" {
 		return
 	}
+	if !a.requireContiguousSelection("Define name") {
+		return
+	}
 	sel := rectBetween(a.anchor, a.cursor)
 	refersTo := engine.QuoteSheetName(a.sheet) + "!" + absRange(sel)
 	if a.structuralOp("Define Name", func() error {
@@ -1530,6 +2059,9 @@ func (a *App) createTable(name string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = a.nextTableName()
+	}
+	if !a.requireContiguousSelection("Create table") {
+		return
 	}
 	sel := rectBetween(a.anchor, a.cursor)
 	if sel.isSingleCell() {
@@ -1931,6 +2463,7 @@ func (a *App) goToRef(text string) {
 		a.setCursor(position{Col: ref.MinCol, Row: ref.MinRow}, false)
 		return
 	}
+	a.clearSelectionOverrides()
 	a.anchor = position{Col: ref.MaxCol, Row: ref.MaxRow}
 	a.cursor = position{Col: ref.MinCol, Row: ref.MinRow}
 	a.scrollIntoView(a.cursor)
@@ -1977,12 +2510,46 @@ func (a *App) resetActiveSheetPosition() {
 	a.cursor, a.anchor = p, p
 	a.selectionKind = selectionCells
 	a.axisAnchor, a.axisFocus = 0, 0
+	a.clearSelectionOverrides()
 }
 
 // selectionStats renders the status bar aggregates for multi-cell
 // selections, like Excel's SUM/AVG/COUNT readout.
 func (a *App) selectionStats() string {
 	sel := a.selectionRect()
+	if len(a.selectionOverrides) > 0 {
+		var values []string
+		if a.selectionKind != selectionCells {
+			positions, err := a.selectedStoredPositions()
+			if err != nil || len(positions) > statsCellLimit {
+				return ""
+			}
+			for _, p := range positions {
+				values = append(values, a.wb.DisplayValue(a.sheet, p.cellName()))
+			}
+		} else {
+			areas := a.selectedCellRects()
+			cellCount := 0
+			for _, area := range areas {
+				rows, cols := area.MaxRow-area.MinRow+1, area.MaxCol-area.MinCol+1
+				if rows > statsCellLimit || cols > statsCellLimit || rows*cols > statsCellLimit-cellCount {
+					return ""
+				}
+				cellCount += rows * cols
+			}
+			if cellCount <= 1 {
+				return ""
+			}
+			for _, area := range areas {
+				for row := area.MinRow; row <= area.MaxRow; row++ {
+					for col := area.MinCol; col <= area.MaxCol; col++ {
+						values = append(values, a.wb.DisplayValue(a.sheet, engine.CellName(col, row)))
+					}
+				}
+			}
+		}
+		return aggregateSelectionValues(values)
+	}
 	if sel.isSingleCell() {
 		return ""
 	}
@@ -2020,6 +2587,25 @@ func (a *App) selectionStats() string {
 				sum += n
 				count++
 			}
+		}
+	}
+	if count == 0 {
+		return ""
+	}
+	return fmt.Sprintf("SUM=%s  AVG=%s  CNT=%d",
+		trimFloat(sum), trimFloat(sum/float64(count)), count)
+}
+
+func aggregateSelectionValues(values []string) string {
+	var sum float64
+	var count int
+	for _, value := range values {
+		if value == "" {
+			continue
+		}
+		if number, err := strconv.ParseFloat(strings.ReplaceAll(value, ",", ""), 64); err == nil {
+			sum += number
+			count++
 		}
 	}
 	if count == 0 {

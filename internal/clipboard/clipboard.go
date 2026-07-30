@@ -12,11 +12,10 @@ import (
 	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
-// Block is a rectangular snapshot of cells taken at copy/cut time. Contents
-// (raw formulas/values) drives normal paste; Display (computed values) and
-// Styles support Paste Special. All three are row-major and parallel; empty
-// cells are empty. Display and Styles may be nil for blocks captured before
-// Paste Special existed or by callers that don't need them.
+// Block is a snapshot of cells taken at copy/cut time. Ordinary cell blocks
+// use parallel row-major Contents, Display, Styles, and Metadata matrices.
+// Whole-axis and multi-area blocks use sparse cells so their cost follows the
+// workbook's physical storage instead of their logical dimensions.
 type Block struct {
 	Kind        BlockKind
 	SourceSheet string
@@ -26,6 +25,7 @@ type Block struct {
 	Styles      [][]document.CellStyle
 	Metadata    [][]document.CellMetadata
 	Merges      []MergedRange
+	Areas       []Area
 	SparseCells []SparseCell
 	AxisCount   int
 	AxisProps   map[int]document.AxisProperties
@@ -33,8 +33,8 @@ type Block struct {
 	Cut         bool
 }
 
-// BlockKind keeps whole-axis intent in the internal clipboard. BlockCells is
-// the zero value for compatibility with ordinary rectangular clipboard data.
+// BlockKind distinguishes rectangular, whole-axis, and disjoint clipboard
+// geometry. BlockCells remains the zero value for compatibility.
 type BlockKind uint8
 
 const (
@@ -42,9 +42,17 @@ const (
 	BlockRows
 	BlockColumns
 	BlockSheet
+	BlockMulti
 )
 
-// SparseCell is a physical cell relative to an axis payload's logical
+// Area is a selected rectangle relative to a block's logical top-left cell.
+// Multi-area blocks keep these rectangles disjoint so gaps are never treated
+// as selected during paste.
+type Area struct {
+	MinCol, MinRow, MaxCol, MaxRow int
+}
+
+// SparseCell is a physical cell relative to a sparse payload's logical
 // top-left corner. Empty physical cells are retained when they carry metadata.
 type SparseCell struct {
 	Col, Row int
@@ -60,8 +68,24 @@ type MergedRange struct {
 }
 
 // Rows and Cols report the block's dimensions.
-func (b Block) Rows() int { return len(b.Contents) }
+func (b Block) Rows() int {
+	if b.Kind == BlockMulti {
+		maxRow := -1
+		for _, area := range b.Areas {
+			maxRow = max(maxRow, area.MaxRow)
+		}
+		return maxRow + 1
+	}
+	return len(b.Contents)
+}
 func (b Block) Cols() int {
+	if b.Kind == BlockMulti {
+		maxCol := -1
+		for _, area := range b.Areas {
+			maxCol = max(maxCol, area.MaxCol)
+		}
+		return maxCol + 1
+	}
 	if len(b.Contents) == 0 {
 		return 0
 	}

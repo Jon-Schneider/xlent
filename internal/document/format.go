@@ -25,49 +25,48 @@ func (w *Workbook) SetAxisNumberFormat(sheet string, axis engine.Axis, start, en
 // ToggleAxisFontStyle follows the existing complete-selection toggle rule,
 // but reads only axis defaults and stored cell exceptions.
 func (w *Workbook) ToggleAxisFontStyle(sheet string, axis engine.Axis, start, end int, attr FontStyle) error {
-	if err := w.ensureSheetEditable(sheet); err != nil {
-		return err
-	}
-	stored, err := w.axisStoredCells(sheet, axis, start, end)
+	allHave, err := w.AxisHasFontStyle(sheet, axis, start, end, attr, nil)
 	if err != nil {
 		return err
+	}
+	return w.SetAxisFontStyle(sheet, axis, start, end, attr, !allHave)
+}
+
+// AxisHasFontStyle reports whether every selected cell on complete rows or
+// columns has attr. Excluded physical cells support finite holes in an axis
+// selection without expanding the axis into a dense cell matrix.
+func (w *Workbook) AxisHasFontStyle(sheet string, axis engine.Axis, start, end int, attr FontStyle, excluded map[StoredCell]struct{}) (bool, error) {
+	stored, err := w.axisStoredCells(sheet, axis, start, end)
+	if err != nil {
+		return false, err
 	}
 	allHave := true
 	axisStyles, err := w.axisStyleIDs(sheet, axis, start, end)
 	if err != nil {
-		return err
+		return false, err
 	}
 	for index := start; index <= end && allHave; index++ {
 		styleID := axisStyles[index]
 		if !styleHasFontAttribute(w.styleByID(styleID), attr) {
-			allHave = false
+			return false, nil
 		}
 	}
 	for _, cell := range stored {
-		if !allHave {
-			break
+		if _, skip := excluded[cell]; skip {
+			continue
 		}
 		styleID, err := w.file.GetCellStyle(sheet, engine.CellName(cell.Col, cell.Row))
 		if err != nil || !styleHasFontAttribute(w.styleByID(styleID), attr) {
-			allHave = false
+			return false, nil
 		}
 	}
-	target := !allHave
+	return allHave, nil
+}
+
+// SetAxisFontStyle applies a specific font state to complete rows or columns.
+func (w *Workbook) SetAxisFontStyle(sheet string, axis engine.Axis, start, end int, attr FontStyle, target bool) error {
 	return w.rewriteAxisStyles(sheet, axis, start, end, func(style *excelize.Style) {
-		if style.Font == nil {
-			style.Font = &excelize.Font{}
-		}
-		switch attr {
-		case FontBold:
-			style.Font.Bold = target
-		case FontItalic:
-			style.Font.Italic = target
-		case FontUnderline:
-			style.Font.Underline = ""
-			if target {
-				style.Font.Underline = "single"
-			}
-		}
+		setFontAttribute(style, attr, target)
 	})
 }
 
@@ -199,6 +198,23 @@ func styleHasFontAttribute(style *excelize.Style, attr FontStyle) bool {
 	}
 }
 
+func setFontAttribute(style *excelize.Style, attr FontStyle, target bool) {
+	if style.Font == nil {
+		style.Font = &excelize.Font{}
+	}
+	switch attr {
+	case FontBold:
+		style.Font.Bold = target
+	case FontItalic:
+		style.Font.Italic = target
+	case FontUnderline:
+		style.Font.Underline = ""
+		if target {
+			style.Font.Underline = "single"
+		}
+	}
+}
+
 // NumberFormat selects how a cell's value renders: a built-in xlsx numFmt ID
 // (so files round-trip cleanly with Excel) or a custom format code, which
 // wins when set.
@@ -234,9 +250,6 @@ const (
 // Excel does: if every cell already has it, it's cleared everywhere;
 // otherwise it's set everywhere.
 func (w *Workbook) ToggleFontStyle(sheet string, minCol, minRow, maxCol, maxRow int, attr FontStyle) error {
-	if err := w.ensureRangeEditable(sheet, minCol, minRow, maxCol, maxRow); err != nil {
-		return err
-	}
 	allHave := true
 scan:
 	for row := minRow; row <= maxRow; row++ {
@@ -249,7 +262,14 @@ scan:
 			}
 		}
 	}
-	target := !allHave
+	return w.SetFontStyle(sheet, minCol, minRow, maxCol, maxRow, attr, !allHave)
+}
+
+// SetFontStyle applies a specific font state across a rectangular cell range.
+func (w *Workbook) SetFontStyle(sheet string, minCol, minRow, maxCol, maxRow int, attr FontStyle, target bool) error {
+	if err := w.ensureRangeEditable(sheet, minCol, minRow, maxCol, maxRow); err != nil {
+		return err
+	}
 
 	rewritten := make(map[int]int)
 	for row := minRow; row <= maxRow; row++ {
@@ -265,22 +285,12 @@ scan:
 				if err != nil || style == nil {
 					style = &excelize.Style{}
 				}
-				if style.Font == nil {
-					style.Font = &excelize.Font{}
-				}
-				switch attr {
-				case FontBold:
-					style.Font.Bold = target
-				case FontItalic:
-					style.Font.Italic = target
-				case FontUnderline:
-					style.Font.Underline = ""
-					if target {
-						style.Font.Underline = "single"
-					}
-				}
+				setFontAttribute(style, attr, target)
 				if newID, err = w.file.NewStyle(style); err != nil {
 					return fmt.Errorf("build style: %w", err)
+				}
+				if newID, err = w.explicitCellStyle(style, newID); err != nil {
+					return err
 				}
 				rewritten[cur] = newID
 			}
@@ -291,6 +301,21 @@ scan:
 	}
 	w.dirty = true
 	return nil
+}
+
+// CellHasFontStyle reports the effective state of one font attribute.
+func (w *Workbook) CellHasFontStyle(sheet, cell string, attr FontStyle) bool {
+	bold, italic, underline := w.CellEmphasis(sheet, cell)
+	switch attr {
+	case FontBold:
+		return bold
+	case FontItalic:
+		return italic
+	case FontUnderline:
+		return underline
+	default:
+		return false
+	}
 }
 
 // CellStyle is a transferable snapshot of the style attributes xlent can set:
@@ -313,7 +338,7 @@ func (w *Workbook) CellStyleAt(sheet, cellName string) CellStyle {
 	out := CellStyle{}
 	if st, err := w.file.GetStyle(id); err == nil && st != nil {
 		out.NumFmtID = st.NumFmt
-		if st.CustomNumFmt != nil {
+		if st.CustomNumFmt != nil && *st.CustomNumFmt != "General" {
 			out.NumFmtCustom = *st.CustomNumFmt
 		}
 		if st.Font != nil {
@@ -348,6 +373,10 @@ func (w *Workbook) ApplyCellStyle(sheet, cellName string, s CellStyle) error {
 	id, err := w.file.NewStyle(style)
 	if err != nil {
 		return fmt.Errorf("build style: %w", err)
+	}
+	id, err = w.explicitCellStyle(style, id)
+	if err != nil {
+		return err
 	}
 	if err := w.file.SetCellStyle(sheet, cell, cell, id); err != nil {
 		return fmt.Errorf("style %s!%s: %w", sheet, cell, err)
@@ -415,6 +444,9 @@ func (w *Workbook) SetNumberFormat(sheet string, minCol, minRow, maxCol, maxRow 
 				if newID, err = w.file.NewStyle(style); err != nil {
 					return fmt.Errorf("build style: %w", err)
 				}
+				if newID, err = w.explicitCellStyle(style, newID); err != nil {
+					return err
+				}
 				rewritten[cur] = newID
 			}
 			if err := w.file.SetCellStyle(sheet, cell, cell, newID); err != nil {
@@ -431,4 +463,23 @@ func (w *Workbook) SetNumberFormat(sheet string, minCol, minRow, maxCol, maxRow 
 	}
 	w.dirty = true
 	return nil
+}
+
+// explicitCellStyle keeps an intentional default-looking cell style from
+// disappearing into style 0. A cell with no explicit style inherits its row
+// or column style, which is wrong when the cell is a deselected hole in a
+// formatted whole-axis selection. A custom General format is visually
+// equivalent to the default but gives the cell an explicit style record.
+func (w *Workbook) explicitCellStyle(style *excelize.Style, styleID int) (int, error) {
+	if styleID != 0 {
+		return styleID, nil
+	}
+	copy := *style
+	general := "General"
+	copy.CustomNumFmt = &general
+	id, err := w.file.NewStyle(&copy)
+	if err != nil {
+		return 0, fmt.Errorf("build explicit cell style: %w", err)
+	}
+	return id, nil
 }

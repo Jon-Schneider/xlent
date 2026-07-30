@@ -85,6 +85,20 @@ func TestRegisterHoldsAndClearsBlocks(t *testing.T) {
 	}
 }
 
+func TestMultiAreaBlockDimensionsIncludeSelectionGaps(t *testing.T) {
+	block := Block{Kind: BlockMulti, Areas: []Area{
+		{MinCol: 0, MinRow: 0, MaxCol: 0, MaxRow: 0},
+		{MinCol: 2, MinRow: 3, MaxCol: 4, MaxRow: 4},
+	}}
+
+	if got := block.Rows(); got != 5 {
+		t.Errorf("Rows = %d, want 5", got)
+	}
+	if got := block.Cols(); got != 5 {
+		t.Errorf("Cols = %d, want 5", got)
+	}
+}
+
 func TestEncodeTSVQuotesAwkwardFields(t *testing.T) {
 	got := EncodeTSV([][]string{
 		{"plain", "has\ttab"},

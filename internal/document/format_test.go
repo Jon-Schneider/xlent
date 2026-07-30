@@ -176,6 +176,40 @@ func TestWholeColumnFormatAppliesToLaterCellsAndRoundTrips(t *testing.T) {
 	}
 }
 
+func TestCellFormattingCanOverrideWholeColumnStyleWithDefaultValues(t *testing.T) {
+	w := New()
+	defer w.Close()
+	sheet := w.Sheets()[0]
+	mustSetCell(t, w, sheet, "A1", "12")
+	mustSetCell(t, w, sheet, "A2", "34")
+
+	if err := w.SetAxisNumberFormat(sheet, engine.AxisCol, 1, 1, FormatCurrency); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.SetNumberFormat(sheet, 1, 1, 1, 1, FormatGeneral); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.CellStyleAt(sheet, "A1").NumFmtCustom; got != "" {
+		t.Errorf("A1 custom format = %q, want General", got)
+	}
+	if got := w.CellStyleAt(sheet, "A2").NumFmtCustom; got != FormatCurrency.Custom {
+		t.Errorf("A2 custom format = %q, want currency", got)
+	}
+
+	if err := w.SetAxisFontStyle(sheet, engine.AxisCol, 1, 1, FontBold, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.SetFontStyle(sheet, 1, 1, 1, 1, FontBold, false); err != nil {
+		t.Fatal(err)
+	}
+	if w.CellHasFontStyle(sheet, "A1", FontBold) {
+		t.Error("A1 should explicitly override the bold column style")
+	}
+	if !w.CellHasFontStyle(sheet, "A2", FontBold) {
+		t.Error("A2 should retain the bold column style")
+	}
+}
+
 func TestCapturingAllDefaultRowPropertiesStaysSparse(t *testing.T) {
 	w := New()
 	defer w.Close()

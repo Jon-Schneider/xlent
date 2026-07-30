@@ -58,6 +58,9 @@ func (r rect) String() string {
 // selectionRect expands the selected rectangle to include any merged cells it
 // touches, matching the visible selection users act on.
 func (a *App) selectionRect() rect {
+	if a.selectionPrimarySet {
+		return a.selectionPrimary
+	}
 	switch a.selectionKind {
 	case selectionRows:
 		anchor, focus := a.axisAnchor, a.axisFocus
@@ -370,7 +373,6 @@ func (a *App) renderGrid(layout gridLayout) string {
 		// one cell's text can spill across its neighbors: plan, resolve spill,
 		// then emit.
 		plans := a.planRow(layout, row, rowContext{
-			sel:         sel,
 			refSpans:    refSpans,
 			pointing:    pointing,
 			pointed:     pointed,
@@ -413,10 +415,8 @@ func (a *App) renderGrid(layout gridLayout) string {
 }
 
 // rowContext carries the per-render invariants planRow needs beyond the row
-// itself: the selection rectangle, formula-ref tints, and cross-sheet pointing
-// state. Bundling them keeps planRow's signature readable.
+// itself. Bundling them keeps planRow's signature readable.
 type rowContext struct {
-	sel         rect
 	refSpans    []refSpan
 	pointing    bool
 	pointed     rect
@@ -468,7 +468,7 @@ func (a *App) planRow(layout gridLayout, row int, rc rowContext) []cellPlan {
 		case rc.onEditSheet && p == a.cursor:
 			style = styleCursorCell
 			highlighted = true
-		case rc.onEditSheet && (rc.sel.contains(p) || inMerge && rc.sel.contains(mergeAnchor)):
+		case rc.onEditSheet && (a.isCellSelected(p) || inMerge && a.isCellSelected(mergeAnchor)):
 			style = styleCellSelected
 			highlighted = true
 		case isErrorValue(value):

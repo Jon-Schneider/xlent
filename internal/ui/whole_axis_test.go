@@ -104,14 +104,14 @@ func TestShiftClickOrdinaryCellConvertsAxisSelectionToRectangle(t *testing.T) {
 	}
 }
 
-func TestCommandClickOrdinaryCellCollapsesSelection(t *testing.T) {
+func TestCommandClickOrdinaryCellAddsToAxisSelection(t *testing.T) {
 	app, _ := setupTestApp(t)
 	app.selectColumn(1, false)
 
 	app.selectOrdinaryCell(position{Col: 3, Row: 4}, true, true)
 
-	if got := app.selectionLabel(); got != "C4" {
-		t.Fatalf("selection = %q, want C4", got)
+	if !app.isCellSelected(position{Col: 1, Row: 4}) || !app.isCellSelected(position{Col: 3, Row: 4}) {
+		t.Fatalf("Command-click did not retain column A and add C4: %q", app.selectionLabel())
 	}
 }
 

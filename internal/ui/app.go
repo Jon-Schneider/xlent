@@ -30,6 +30,13 @@ type App struct {
 	selectionKind selectionKind
 	axisAnchor    int
 	axisFocus     int
+	// selectionOverrides stores the finite cells toggled by Command-click.
+	// The bool is their explicit selected state relative to the primary
+	// selection above, allowing additions and holes without expanding a large
+	// rectangle or whole-axis selection into individual cells.
+	selectionOverrides  map[position]bool
+	selectionPrimary    rect
+	selectionPrimarySet bool
 
 	topRow  int // first visible sheet row
 	leftCol int // first visible sheet column
@@ -1084,6 +1091,7 @@ func (a *App) moveCursor(dCol, dRow int, extend bool) {
 }
 
 func (a *App) setCursor(p position, extend bool) {
+	a.clearSelectionOverrides()
 	p = a.normalizeNavigablePosition(p, 1, 1)
 	a.cursor = p
 	if !extend {
@@ -1183,6 +1191,7 @@ func (a *App) dataJumpTarget(dCol, dRow, limitCol, limitRow int) position {
 }
 
 func (a *App) selectUsedRange() {
+	a.clearSelectionOverrides()
 	maxCol, maxRow := a.wb.UsedRange(a.sheet)
 	if maxCol == 0 {
 		a.selectionKind = selectionSheet
@@ -1264,7 +1273,7 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 		return
 	}
 	extend := m.Mod.Contains(tea.ModShift)
-	command := m.Mod.Contains(tea.ModMeta) || m.Mod.Contains(tea.ModSuper)
+	command := commandModifierActive(m, platformCommandModifierPressed())
 	a.headingDrag = headingDrag{}
 
 	// Sheet tabs.
@@ -1289,6 +1298,7 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 	// the complete logical column while leaving the active row unchanged.
 	if m.Y == a.layout.headerY {
 		if m.X < a.layout.gutterW {
+			a.clearSelectionOverrides()
 			a.selectionKind = selectionSheet
 			a.axisAnchor, a.axisFocus = 0, 0
 			a.anchor = position{Col: 1, Row: 1}
@@ -1318,6 +1328,10 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 	if col := a.layout.colAt(m.X); col > 0 {
 		a.selectOrdinaryCell(position{Col: col, Row: row}, extend, command)
 	}
+}
+
+func commandModifierActive(mouse tea.Mouse, platformPressed bool) bool {
+	return mouse.Mod.Contains(tea.ModMeta) || mouse.Mod.Contains(tea.ModSuper) || platformPressed
 }
 
 // openHeadingMenu opens the action relevant to a right-clicked sheet tab

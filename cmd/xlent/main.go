@@ -87,7 +87,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	if _, err := tea.NewProgram(app).Run(); err != nil {
+	program := tea.NewProgram(app, tea.WithOutput(stdout))
+	capture := newShiftMouseCapture(stdout, os.Getenv("TMUX") != "")
+	if err := runInteractiveProgram(program, capture); err != nil {
 		fmt.Fprintf(stderr, "xlent: %v\n", err)
 		return 1
 	}

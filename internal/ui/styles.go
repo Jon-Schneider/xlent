@@ -14,6 +14,11 @@ var (
 				Background(lipgloss.Color("24")).
 				Bold(true)
 
+	styleInsertionLine = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("226")).
+				Background(lipgloss.Color("236")).
+				Bold(true)
+
 	styleCell = lipgloss.NewStyle()
 
 	styleCellSelected = lipgloss.NewStyle().

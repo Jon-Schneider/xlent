@@ -8,6 +8,197 @@ import (
 	"github.com/Jon-Schneider/xlent/internal/engine"
 )
 
+// SetAxisNumberFormat applies a number format through row/column style
+// metadata while preserving unrelated style properties on existing physical
+// cells. Cells created later inherit the axis style automatically.
+func (w *Workbook) SetAxisNumberFormat(sheet string, axis engine.Axis, start, end int, f NumberFormat) error {
+	return w.rewriteAxisStyles(sheet, axis, start, end, func(style *excelize.Style) {
+		style.NumFmt = f.ID
+		style.CustomNumFmt = nil
+		if f.Custom != "" {
+			custom := f.Custom
+			style.CustomNumFmt = &custom
+		}
+	})
+}
+
+// ToggleAxisFontStyle follows the existing complete-selection toggle rule,
+// but reads only axis defaults and stored cell exceptions.
+func (w *Workbook) ToggleAxisFontStyle(sheet string, axis engine.Axis, start, end int, attr FontStyle) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
+	stored, err := w.axisStoredCells(sheet, axis, start, end)
+	if err != nil {
+		return err
+	}
+	allHave := true
+	axisStyles, err := w.axisStyleIDs(sheet, axis, start, end)
+	if err != nil {
+		return err
+	}
+	for index := start; index <= end && allHave; index++ {
+		styleID := axisStyles[index]
+		if !styleHasFontAttribute(w.styleByID(styleID), attr) {
+			allHave = false
+		}
+	}
+	for _, cell := range stored {
+		if !allHave {
+			break
+		}
+		styleID, err := w.file.GetCellStyle(sheet, engine.CellName(cell.Col, cell.Row))
+		if err != nil || !styleHasFontAttribute(w.styleByID(styleID), attr) {
+			allHave = false
+		}
+	}
+	target := !allHave
+	return w.rewriteAxisStyles(sheet, axis, start, end, func(style *excelize.Style) {
+		if style.Font == nil {
+			style.Font = &excelize.Font{}
+		}
+		switch attr {
+		case FontBold:
+			style.Font.Bold = target
+		case FontItalic:
+			style.Font.Italic = target
+		case FontUnderline:
+			style.Font.Underline = ""
+			if target {
+				style.Font.Underline = "single"
+			}
+		}
+	})
+}
+
+func (w *Workbook) rewriteAxisStyles(sheet string, axis engine.Axis, start, end int, mutate func(*excelize.Style)) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
+	if end < start {
+		start, end = end, start
+	}
+	stored, err := w.axisStoredCells(sheet, axis, start, end)
+	if err != nil {
+		return err
+	}
+	cellStyles := make(map[StoredCell]int, len(stored))
+	for _, cell := range stored {
+		styleID, err := w.file.GetCellStyle(sheet, engine.CellName(cell.Col, cell.Row))
+		if err != nil {
+			return err
+		}
+		cellStyles[cell] = styleID
+	}
+	axisStyles, err := w.axisStyleIDs(sheet, axis, start, end)
+	if err != nil {
+		return err
+	}
+
+	rewritten := make(map[int]int)
+	rewrite := func(styleID int) (int, error) {
+		if newID, ok := rewritten[styleID]; ok {
+			return newID, nil
+		}
+		style := w.styleByID(styleID)
+		mutate(style)
+		newID, err := w.file.NewStyle(style)
+		if err != nil {
+			return 0, fmt.Errorf("build axis style: %w", err)
+		}
+		rewritten[styleID] = newID
+		return newID, nil
+	}
+
+	if axis == engine.AxisCol {
+		runStart, runStyle := start, -1
+		for index := start; index <= end+1; index++ {
+			newID := -1
+			if index <= end {
+				newID, err = rewrite(axisStyles[index])
+				if err != nil {
+					return err
+				}
+			}
+			if runStyle < 0 {
+				runStart, runStyle = index, newID
+				continue
+			}
+			if newID == runStyle {
+				continue
+			}
+			rangeName := engine.ColumnName(runStart) + ":" + engine.ColumnName(index-1)
+			if err := w.file.SetColStyle(sheet, rangeName, runStyle); err != nil {
+				return fmt.Errorf("format columns %s: %w", rangeName, err)
+			}
+			runStart, runStyle = index, newID
+		}
+	} else {
+		for index := start; index <= end; index++ {
+			newID, err := rewrite(axisStyles[index])
+			if err != nil {
+				return err
+			}
+			if err := w.file.SetRowStyle(sheet, index, index, newID); err != nil {
+				return fmt.Errorf("format row %d: %w", index, err)
+			}
+		}
+	}
+
+	// SetColStyle and SetRowStyle overwrite styles on physical cells. Restore
+	// each exception with only the requested property changed.
+	for cell, oldID := range cellStyles {
+		newID, err := rewrite(oldID)
+		if err != nil {
+			return err
+		}
+		name := engine.CellName(cell.Col, cell.Row)
+		if err := w.file.SetCellStyle(sheet, name, name, newID); err != nil {
+			return fmt.Errorf("format %s!%s: %w", sheet, name, err)
+		}
+	}
+	w.values = make(map[engine.Node]string)
+	w.emphasis = make(map[int][3]bool)
+	w.dirty = true
+	return nil
+}
+
+func (w *Workbook) axisStoredCells(sheet string, axis engine.Axis, start, end int) ([]StoredCell, error) {
+	if axis == engine.AxisCol {
+		return w.StoredCellsInRange(sheet, start, 1, end, engine.MaxRows)
+	}
+	return w.StoredCellsInRange(sheet, 1, start, engine.MaxCols, end)
+}
+
+func (w *Workbook) axisStyleID(sheet string, axis engine.Axis, index int) (int, error) {
+	styles, err := w.axisStyleIDs(sheet, axis, index, index)
+	return styles[index], err
+}
+
+func (w *Workbook) styleByID(styleID int) *excelize.Style {
+	style, err := w.file.GetStyle(styleID)
+	if err != nil || style == nil {
+		return &excelize.Style{}
+	}
+	return style
+}
+
+func styleHasFontAttribute(style *excelize.Style, attr FontStyle) bool {
+	if style == nil || style.Font == nil {
+		return false
+	}
+	switch attr {
+	case FontBold:
+		return style.Font.Bold
+	case FontItalic:
+		return style.Font.Italic
+	case FontUnderline:
+		return style.Font.Underline != "" && style.Font.Underline != "none"
+	default:
+		return false
+	}
+}
+
 // NumberFormat selects how a cell's value renders: a built-in xlsx numFmt ID
 // (so files round-trip cleanly with Excel) or a custom format code, which
 // wins when set.
@@ -21,13 +212,13 @@ type NumberFormat struct {
 // $#,##0.00 (5..8 add the parenthesized-negative variants).
 var (
 	FormatGeneral  = NumberFormat{ID: 0}
-	FormatNumber   = NumberFormat{ID: 4}                  // #,##0.00
+	FormatNumber   = NumberFormat{ID: 4} // #,##0.00
 	FormatCurrency = NumberFormat{Custom: "$#,##0.00"}
-	FormatPercent  = NumberFormat{ID: 10}                 // 0.00%
-	FormatDate     = NumberFormat{ID: 14}                 // m/d/yyyy
-	FormatTime     = NumberFormat{ID: 18}                 // h:mm AM/PM
-	FormatDateTime = NumberFormat{ID: 22}                 // m/d/yyyy h:mm
-	FormatText     = NumberFormat{ID: 49}                 // @
+	FormatPercent  = NumberFormat{ID: 10} // 0.00%
+	FormatDate     = NumberFormat{ID: 14} // m/d/yyyy
+	FormatTime     = NumberFormat{ID: 18} // h:mm AM/PM
+	FormatDateTime = NumberFormat{ID: 22} // m/d/yyyy h:mm
+	FormatText     = NumberFormat{ID: 49} // @
 )
 
 // FontStyle is a togglable font attribute.

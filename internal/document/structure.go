@@ -43,6 +43,17 @@ func (w *Workbook) RestoreSnapshot(data []byte) error {
 	return nil
 }
 
+// RestoreSnapshotState is used when an in-flight command fails or proves to
+// be a no-op. Unlike undo/redo, rollback must preserve the dirty state that
+// existed before the attempted command.
+func (w *Workbook) RestoreSnapshotState(data []byte, dirty bool) error {
+	if err := w.RestoreSnapshot(data); err != nil {
+		return err
+	}
+	w.dirty = dirty
+	return nil
+}
+
 // resetDerivedState rebuilds everything computed from cell content after the
 // underlying file changed wholesale: the dependency graph, the value and
 // cycle caches, and the used-range cache. Any change that gets here is a

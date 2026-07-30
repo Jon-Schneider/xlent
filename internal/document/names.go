@@ -65,3 +65,27 @@ func (w *Workbook) DeleteDefinedName(name string) error {
 	w.resetDerivedState()
 	return nil
 }
+
+// RetargetDefinedNames makes workbook names follow a cut/move just as formula
+// references do. It is called before a source band is structurally removed.
+func (w *Workbook) RetargetDefinedNames(move engine.MoveSpec) error {
+	definitions := w.file.GetDefinedName()
+	for _, definition := range definitions {
+		formulaSheet := definition.Scope
+		rewritten, changed := engine.RetargetFormula(formulaSheet, definition.RefersTo, move)
+		if !changed {
+			continue
+		}
+		original := definition
+		if err := w.file.DeleteDefinedName(&original); err != nil {
+			return fmt.Errorf("retarget name %q: %w", definition.Name, err)
+		}
+		definition.RefersTo = rewritten
+		if err := w.file.SetDefinedName(&definition); err != nil {
+			return fmt.Errorf("retarget name %q: %w", definition.Name, err)
+		}
+	}
+	w.loadNames()
+	w.dirty = true
+	return nil
+}

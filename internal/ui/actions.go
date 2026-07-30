@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -63,7 +64,39 @@ func (a *App) cancelEdit() {
 
 // clearSelection blanks every cell in the selection as one undoable command.
 func (a *App) clearSelection() {
-	sel := rectBetween(a.anchor, a.cursor)
+	sel := a.selectionRect()
+	if a.selectionKind != selectionCells {
+		if a.wb.SheetProtected(a.sheet) {
+			a.statusMsg = fmt.Sprintf("%s: sheet is protected", a.sheet)
+			return
+		}
+		stored, err := a.wb.StoredCellsInRange(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow)
+		if err != nil {
+			a.statusMsg = err.Error()
+			return
+		}
+		var cells []string
+		for _, storedCell := range stored {
+			cell := engine.CellName(storedCell.Col, storedCell.Row)
+			if a.wb.RawContent(a.sheet, cell) != "" {
+				cells = append(cells, cell)
+			}
+		}
+		if len(cells) == 0 {
+			return
+		}
+		if a.structuralOp("Clear Contents", func() error {
+			for _, cell := range cells {
+				if err := a.wb.SetCell(a.sheet, cell, ""); err != nil {
+					return err
+				}
+			}
+			return nil
+		}) {
+			a.statusMsg = "Cleared " + a.selectionLabel()
+		}
+		return
+	}
 	if err := a.wb.CheckRangeEditable(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow); err != nil {
 		a.statusMsg = err.Error()
 		return
@@ -91,6 +124,9 @@ func (a *App) clearSelection() {
 // clipboard as TSV (OSC 52).
 func (a *App) copySelection(cut bool) tea.Cmd {
 	sel := a.selectionRect()
+	if a.selectionKind != selectionCells {
+		return a.copyAxisSelection(cut, sel)
+	}
 
 	contents := make([][]string, 0, sel.MaxRow-sel.MinRow+1)
 	display := make([][]string, 0, sel.MaxRow-sel.MinRow+1)
@@ -143,6 +179,132 @@ func (a *App) copySelection(cut bool) tea.Cmd {
 	return tea.SetClipboard(clipboard.EncodeTSV(display))
 }
 
+// copyAxisSelection captures only physical cells plus row/column properties.
+// The offsets still use the full logical bounds, so formulas and replacement
+// paste retain Excel's axis semantics without a dense million-row matrix.
+func (a *App) copyAxisSelection(cut bool, sel rect) tea.Cmd {
+	block, err := a.captureAxisBlock(sel, cut)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return nil
+	}
+	a.register.Put(block)
+	verb := "Copied "
+	if cut {
+		verb = "Cut "
+	}
+	a.statusMsg = verb + a.selectionLabel()
+	rows, safe := sparseTSV(block.SparseCells)
+	if !safe {
+		a.statusMsg += " (internal clipboard only)"
+		return nil
+	}
+	return tea.SetClipboard(clipboard.EncodeTSV(rows))
+}
+
+func (a *App) captureAxisBlock(sel rect, cut bool) (clipboard.Block, error) {
+	logical := engine.Ref{Sheet: a.sheet, MinCol: sel.MinCol, MinRow: sel.MinRow, MaxCol: sel.MaxCol, MaxRow: sel.MaxRow}
+	for _, merged := range a.wb.MergedRangesOverlapping(a.sheet, logical) {
+		if merged.MinCol < logical.MinCol || merged.MaxCol > logical.MaxCol ||
+			merged.MinRow < logical.MinRow || merged.MaxRow > logical.MaxRow {
+			return clipboard.Block{}, fmt.Errorf("merged range %s:%s crosses the selection boundary",
+				engine.CellName(merged.MinCol, merged.MinRow), engine.CellName(merged.MaxCol, merged.MaxRow))
+		}
+	}
+	stored, err := a.wb.StoredCellsInRange(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow)
+	if err != nil {
+		return clipboard.Block{}, err
+	}
+	kind := clipboard.BlockSheet
+	axis := engine.AxisRow
+	axisStart, axisCount := 1, 0
+	if a.selectionKind == selectionRows {
+		kind = clipboard.BlockRows
+		axisStart, axisCount = sel.MinRow, sel.MaxRow-sel.MinRow+1
+	} else if a.selectionKind == selectionColumns {
+		kind = clipboard.BlockColumns
+		axis = engine.AxisCol
+		axisStart, axisCount = sel.MinCol, sel.MaxCol-sel.MinCol+1
+	}
+	properties := map[int]document.AxisProperties(nil)
+	if kind != clipboard.BlockSheet {
+		properties, err = a.wb.CaptureAxisProperties(a.sheet, axis, axisStart, axisStart+axisCount-1)
+		if err != nil {
+			return clipboard.Block{}, err
+		}
+	}
+	sparse := make([]clipboard.SparseCell, 0, len(stored))
+	for _, physical := range stored {
+		cell := engine.CellName(physical.Col, physical.Row)
+		metadata := a.wb.CellMetadataAt(a.sheet, cell)
+		// Axis payloads carry validation as sparse ranges below. Keeping a
+		// second per-cell copy would fragment and duplicate those rules.
+		metadata.Validations = nil
+		sparse = append(sparse, clipboard.SparseCell{
+			Col: physical.Col - sel.MinCol, Row: physical.Row - sel.MinRow,
+			Content:  a.wb.RawContent(a.sheet, cell),
+			Display:  a.wb.DisplayValue(a.sheet, cell),
+			Metadata: metadata,
+		})
+	}
+	ref := engine.Ref{Sheet: a.sheet, MinCol: sel.MinCol, MinRow: sel.MinRow, MaxCol: sel.MaxCol, MaxRow: sel.MaxRow}
+	var merges []clipboard.MergedRange
+	for _, merged := range a.wb.MergedRangesWithin(a.sheet, ref) {
+		merges = append(merges, clipboard.MergedRange{
+			MinCol: merged.MinCol - sel.MinCol, MinRow: merged.MinRow - sel.MinRow,
+			MaxCol: merged.MaxCol - sel.MinCol, MaxRow: merged.MaxRow - sel.MinRow,
+		})
+	}
+	validations, err := a.wb.ValidationsInRange(a.sheet, ref)
+	if err != nil {
+		return clipboard.Block{}, err
+	}
+	for index := range validations {
+		validations[index].MinCol -= sel.MinCol
+		validations[index].MaxCol -= sel.MinCol
+		validations[index].MinRow -= sel.MinRow
+		validations[index].MaxRow -= sel.MinRow
+	}
+	return clipboard.Block{
+		Kind: kind, SourceSheet: a.sheet,
+		SourceCell:  engine.CellName(sel.MinCol, sel.MinRow),
+		SparseCells: sparse, AxisCount: axisCount, AxisProps: properties,
+		Merges: merges, Validations: validations, Cut: cut,
+	}, nil
+}
+
+// sparseTSV builds the smallest rectangular value payload around nonblank
+// stored cells. A very sparse but far-apart selection stays internal instead
+// of allocating an enormous terminal clipboard rectangle.
+func sparseTSV(cells []clipboard.SparseCell) ([][]string, bool) {
+	minCol, minRow := engine.MaxCols, engine.MaxRows
+	maxCol, maxRow := -1, -1
+	for _, cell := range cells {
+		if cell.Display == "" {
+			continue
+		}
+		minCol, minRow = min(minCol, cell.Col), min(minRow, cell.Row)
+		maxCol, maxRow = max(maxCol, cell.Col), max(maxRow, cell.Row)
+	}
+	if maxCol < minCol || maxRow < minRow {
+		return nil, true
+	}
+	cols, rows := maxCol-minCol+1, maxRow-minRow+1
+	if rows > statsCellLimit || cols > statsCellLimit || rows*cols > statsCellLimit {
+		return nil, false
+	}
+	out := make([][]string, rows)
+	for row := range out {
+		out[row] = make([]string, cols)
+	}
+	for _, cell := range cells {
+		if cell.Col >= minCol && cell.Col <= maxCol && cell.Row >= minRow && cell.Row <= maxRow {
+			out[cell.Row-minRow][cell.Col-minCol] = cell.Display
+		}
+	}
+	return out, true
+}
+
 // pasteFromRegister pastes content and its full cell metadata as one
 // snapshot-undoable command. A cut block also clears its source and is
 // consumed.
@@ -150,6 +312,10 @@ func (a *App) pasteFromRegister() {
 	block, ok := a.register.Get()
 	if !ok {
 		a.statusMsg = "Nothing to paste"
+		return
+	}
+	if block.Kind != clipboard.BlockCells {
+		a.pasteAxisReplacement(block)
 		return
 	}
 
@@ -251,6 +417,532 @@ func (a *App) pasteFromRegister() {
 	if block.Cut {
 		a.register.Clear()
 	}
+}
+
+// pasteAxisReplacement replaces complete destination rows or columns using a
+// sparse payload. The destination is determined solely by the active axis;
+// the orthogonal active-cell coordinate is intentionally ignored.
+func (a *App) pasteAxisReplacement(block clipboard.Block) {
+	if block.Kind == clipboard.BlockSheet {
+		a.statusMsg = "Whole-sheet paste is not supported"
+		return
+	}
+	if block.Kind == clipboard.BlockRows && a.selectionKind == selectionColumns {
+		a.statusMsg = "Cannot paste rows onto a column selection"
+		return
+	}
+	if block.Kind == clipboard.BlockColumns && a.selectionKind == selectionRows {
+		a.statusMsg = "Cannot paste columns onto a row selection"
+		return
+	}
+	sourceCol, sourceRow, err := engine.ParseCellName(block.SourceCell)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	axis := engine.AxisRow
+	targetStart, sourceStart := a.cursor.Row, sourceRow
+	destination := engine.Ref{Sheet: a.sheet, MinCol: 1, MinRow: targetStart, MaxCol: engine.MaxCols, MaxRow: targetStart + block.AxisCount - 1}
+	source := engine.Ref{Sheet: block.SourceSheet, MinCol: 1, MinRow: sourceStart, MaxCol: engine.MaxCols, MaxRow: sourceStart + block.AxisCount - 1}
+	dCol, dRow := 0, targetStart-sourceStart
+	if block.Kind == clipboard.BlockColumns {
+		axis = engine.AxisCol
+		targetStart, sourceStart = a.cursor.Col, sourceCol
+		destination = engine.Ref{Sheet: a.sheet, MinCol: targetStart, MinRow: 1, MaxCol: targetStart + block.AxisCount - 1, MaxRow: engine.MaxRows}
+		source = engine.Ref{Sheet: block.SourceSheet, MinCol: sourceStart, MinRow: 1, MaxCol: sourceStart + block.AxisCount - 1, MaxRow: engine.MaxRows}
+		dCol, dRow = targetStart-sourceStart, 0
+	}
+	if destination.MaxCol > engine.MaxCols || destination.MaxRow > engine.MaxRows {
+		a.statusMsg = "Axis paste would exceed the worksheet boundary"
+		return
+	}
+	if block.Cut && strings.EqualFold(block.SourceSheet, a.sheet) && source == destination {
+		a.statusMsg = "Paste would not move the selection"
+		return
+	}
+	if err := a.preflightAxisMutation(source, destination, block.Cut); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+
+	ok := a.structuralOp("Paste", func() error {
+		if err := a.unmergeContained(destination); err != nil {
+			return err
+		}
+		if block.Cut {
+			if err := a.unmergeContained(source); err != nil {
+				return err
+			}
+		}
+		if err := a.wb.ReplaceValidationsInRange(destination.Sheet, destination, nil); err != nil {
+			return err
+		}
+		if err := a.wb.ClearStoredRange(destination.Sheet, destination); err != nil {
+			return err
+		}
+		if block.Cut {
+			if err := a.wb.ReplaceValidationsInRange(source.Sheet, source, nil); err != nil {
+				return err
+			}
+			if err := a.wb.ClearStoredRange(source.Sheet, source); err != nil {
+				return err
+			}
+			if err := a.wb.ApplyAxisProperties(source.Sheet, axis, sourceStart, block.AxisCount, nil); err != nil {
+				return err
+			}
+		}
+		if err := a.wb.ApplyAxisProperties(destination.Sheet, axis, targetStart, block.AxisCount, block.AxisProps); err != nil {
+			return err
+		}
+		for _, sparse := range block.SparseCells {
+			col, row := destination.MinCol+sparse.Col, destination.MinRow+sparse.Row
+			content := sparse.Content
+			if !block.Cut && strings.HasPrefix(content, "=") {
+				content = engine.AdjustFormula(content, dCol, dRow)
+			}
+			cell := engine.CellName(col, row)
+			if err := a.wb.SetCell(destination.Sheet, cell, content); err != nil {
+				return err
+			}
+			if err := a.wb.ApplyCellMetadata(destination.Sheet, cell, sparse.Metadata); err != nil {
+				return err
+			}
+		}
+		for _, merged := range block.Merges {
+			ref := engine.Ref{Sheet: destination.Sheet,
+				MinCol: destination.MinCol + merged.MinCol, MinRow: destination.MinRow + merged.MinRow,
+				MaxCol: destination.MinCol + merged.MaxCol, MaxRow: destination.MinRow + merged.MaxRow}
+			if err := a.wb.MergeRange(destination.Sheet, ref); err != nil {
+				return err
+			}
+		}
+		if err := a.wb.ReplaceValidationsInRange(destination.Sheet, destination,
+			a.axisValidationsAt(block, destination, !block.Cut, dCol, dRow)); err != nil {
+			return err
+		}
+		if block.Cut {
+			move := engine.MoveSpec{From: source, ToSheet: destination.Sheet, DCol: dCol, DRow: dRow}
+			if _, err := a.wb.RetargetReferences(move); err != nil {
+				return err
+			}
+			if err := a.wb.RetargetDefinedNames(move); err != nil {
+				return err
+			}
+			return a.wb.RetargetValidationFormulas(move)
+		}
+		return nil
+	})
+	if !ok {
+		return
+	}
+	if block.Kind == clipboard.BlockRows {
+		a.cursor.Row = targetStart
+		a.anchor = a.cursor
+		a.selectRow(targetStart+block.AxisCount-1, true)
+	} else {
+		a.cursor.Col = targetStart
+		a.anchor = a.cursor
+		a.selectColumn(targetStart+block.AxisCount-1, true)
+	}
+	a.statusMsg = "Pasted " + a.selectionLabel()
+	if block.Cut {
+		a.register.Clear()
+	}
+}
+
+// preflightAxisMutation rejects structures that the current xlsx layer cannot
+// safely preserve. The error names the blocker and no snapshot mutation has
+// begun when this returns.
+func (a *App) preflightAxisMutation(source, destination engine.Ref, moving bool) error {
+	if a.wb.SheetProtected(destination.Sheet) || moving && a.wb.SheetProtected(source.Sheet) {
+		return errors.New("protected sheet blocks whole-axis paste")
+	}
+	for _, ref := range []engine.Ref{source, destination} {
+		for _, merged := range a.wb.MergedRangesOverlapping(ref.Sheet, ref) {
+			if merged.MinCol < ref.MinCol || merged.MaxCol > ref.MaxCol || merged.MinRow < ref.MinRow || merged.MaxRow > ref.MaxRow {
+				return fmt.Errorf("merged range %s:%s blocks whole-axis operation",
+					engine.CellName(merged.MinCol, merged.MinRow), engine.CellName(merged.MaxCol, merged.MaxRow))
+			}
+		}
+		for _, table := range a.wb.Tables() {
+			if table.Sheet != ref.Sheet {
+				continue
+			}
+			tableRef := engine.Ref{Sheet: table.Sheet, MinCol: table.MinCol, MinRow: table.MinRow, MaxCol: table.MaxCol, MaxRow: table.MaxRow}
+			if refsOverlap(ref, tableRef) {
+				return fmt.Errorf("table %s blocks whole-axis operation", table.Name)
+			}
+		}
+		if filter, ok := a.wb.Filter(ref.Sheet); ok {
+			filterRef := engine.Ref{Sheet: ref.Sheet, MinCol: filter.MinCol, MinRow: filter.MinRow, MaxCol: filter.MaxCol, MaxRow: filter.MaxRow}
+			if refsOverlap(ref, filterRef) {
+				return errors.New("active AutoFilter blocks whole-axis operation")
+			}
+		}
+	}
+	return nil
+}
+
+func refsOverlap(a, b engine.Ref) bool {
+	return a.MinCol <= b.MaxCol && b.MinCol <= a.MaxCol && a.MinRow <= b.MaxRow && b.MinRow <= a.MaxRow
+}
+
+func (a *App) unmergeContained(r engine.Ref) error {
+	if len(a.wb.MergedRangesWithin(r.Sheet, r)) == 0 {
+		return nil
+	}
+	return a.wb.UnmergeRange(r.Sheet, r)
+}
+
+// insertAxisPayload performs the context-menu Insert Cut/Copied command. It
+// always inserts; a same-sheet cut is routed through the reorder path.
+func (a *App) insertAxisPayload() {
+	block, ok := a.register.Get()
+	if !ok || block.Kind == clipboard.BlockCells || block.Kind == clipboard.BlockSheet {
+		a.statusMsg = "No row or column payload to insert"
+		return
+	}
+	if block.Kind == clipboard.BlockRows && a.selectionKind == selectionColumns ||
+		block.Kind == clipboard.BlockColumns && a.selectionKind == selectionRows {
+		a.statusMsg = "Clipboard axis does not match the destination heading"
+		return
+	}
+	targetStart := a.cursor.Row
+	axis := engine.AxisRow
+	if block.Kind == clipboard.BlockColumns {
+		targetStart = a.cursor.Col
+		axis = engine.AxisCol
+	}
+	if block.Cut && strings.EqualFold(block.SourceSheet, a.sheet) {
+		finalStart, changed := a.moveAxisBlock(block, targetStart)
+		if !changed {
+			return
+		}
+		a.selectMovedAxes(block.Kind, finalStart, block.AxisCount)
+		a.register.Clear()
+		return
+	}
+	if err := a.preflightAxisInsertion(a.sheet, axis, targetStart, block.AxisCount); err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	sourceCol, sourceRow, err := engine.ParseCellName(block.SourceCell)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return
+	}
+	sourceStart := sourceRow
+	if axis == engine.AxisCol {
+		sourceStart = sourceCol
+	}
+	source := axisRef(block.SourceSheet, axis, sourceStart, block.AxisCount)
+	destination := axisRef(a.sheet, axis, targetStart, block.AxisCount)
+	if block.Cut {
+		if err := a.preflightAxisMutation(source, destination, true); err != nil {
+			a.statusMsg = err.Error()
+			return
+		}
+	}
+	label := "Insert Copied Axes"
+	if block.Cut {
+		label = "Insert Cut Axes"
+	}
+	if !a.structuralOp(label, func() error {
+		if err := a.insertBlankAxes(a.sheet, axis, targetStart, block.AxisCount); err != nil {
+			return err
+		}
+		if err := a.writeAxisBlockAt(block, a.sheet, targetStart, !block.Cut); err != nil {
+			return err
+		}
+		if !block.Cut {
+			return nil
+		}
+		dCol, dRow := 0, targetStart-sourceStart
+		if axis == engine.AxisCol {
+			dCol, dRow = targetStart-sourceStart, 0
+		}
+		move := engine.MoveSpec{From: source, ToSheet: a.sheet, DCol: dCol, DRow: dRow}
+		if _, err := a.wb.RetargetReferences(move); err != nil {
+			return err
+		}
+		if err := a.wb.RetargetDefinedNames(move); err != nil {
+			return err
+		}
+		if err := a.wb.RetargetValidationFormulas(move); err != nil {
+			return err
+		}
+		if err := a.unmergeContained(source); err != nil {
+			return err
+		}
+		return a.removeAxes(block.SourceSheet, axis, sourceStart, block.AxisCount)
+	}) {
+		return
+	}
+	a.selectMovedAxes(block.Kind, targetStart, block.AxisCount)
+	verb := "Inserted copied "
+	if block.Cut {
+		verb = "Inserted cut "
+		a.register.Clear()
+	}
+	a.statusMsg = fmt.Sprintf("%s%d %s(s)", verb, block.AxisCount, axisNoun(axis))
+}
+
+// moveAxisBlock reorders a same-sheet band by inserting a temporary copy,
+// retargeting references to it, then removing the original. Because insertion
+// happens first, destination data is never overwritten and reference targets
+// remain valid throughout the move.
+func (a *App) moveAxisBlock(block clipboard.Block, before int) (int, bool) {
+	sourceCol, sourceRow, err := engine.ParseCellName(block.SourceCell)
+	if err != nil {
+		a.statusMsg = err.Error()
+		return 0, false
+	}
+	axis, sourceStart := engine.AxisRow, sourceRow
+	if block.Kind == clipboard.BlockColumns {
+		axis, sourceStart = engine.AxisCol, sourceCol
+	}
+	if before >= sourceStart && before <= sourceStart+block.AxisCount {
+		a.statusMsg = "Move would not change axis order"
+		return sourceStart, false
+	}
+	if err := a.preflightAxisInsertion(a.sheet, axis, before, block.AxisCount); err != nil {
+		a.statusMsg = err.Error()
+		return 0, false
+	}
+	affectedStart := min(sourceStart, before)
+	affectedEnd := max(sourceStart+block.AxisCount-1, before-1)
+	affected := axisRef(a.sheet, axis, affectedStart, affectedEnd-affectedStart+1)
+	if err := a.preflightAxisMutation(affected, affected, true); err != nil {
+		a.statusMsg = err.Error()
+		return 0, false
+	}
+	finalStart := before
+	if sourceStart < before {
+		finalStart -= block.AxisCount
+	}
+	if !a.structuralOp("Move "+axisNoun(axis)+"s", func() error {
+		if err := a.insertBlankAxes(a.sheet, axis, before, block.AxisCount); err != nil {
+			return err
+		}
+		shiftedSource := sourceStart
+		if before <= sourceStart {
+			shiftedSource += block.AxisCount
+		}
+		// Inserting before the source structurally shifts formulas in the
+		// source band. Read those post-insert formula texts back before making
+		// the temporary copy; using the pre-insert clipboard text here would
+		// leave upward moves pointing at stale coordinates.
+		shiftedBlock := a.axisBlockWithCurrentContents(block, axisRef(a.sheet, axis, shiftedSource, block.AxisCount))
+		if err := a.writeAxisBlockAt(shiftedBlock, a.sheet, before, false); err != nil {
+			return err
+		}
+		source := axisRef(a.sheet, axis, shiftedSource, block.AxisCount)
+		dCol, dRow := 0, before-shiftedSource
+		if axis == engine.AxisCol {
+			dCol, dRow = before-shiftedSource, 0
+		}
+		move := engine.MoveSpec{From: source, ToSheet: a.sheet, DCol: dCol, DRow: dRow}
+		if _, err := a.wb.RetargetReferences(move); err != nil {
+			return err
+		}
+		if err := a.wb.RetargetDefinedNames(move); err != nil {
+			return err
+		}
+		if err := a.wb.RetargetValidationFormulas(move); err != nil {
+			return err
+		}
+		if err := a.unmergeContained(source); err != nil {
+			return err
+		}
+		return a.removeAxes(a.sheet, axis, shiftedSource, block.AxisCount)
+	}) {
+		return 0, false
+	}
+	a.statusMsg = fmt.Sprintf("Moved %ss %d:%d before %s %d", axisNoun(axis), sourceStart,
+		sourceStart+block.AxisCount-1, axisNoun(axis), before)
+	return finalStart, true
+}
+
+func (a *App) axisBlockWithCurrentContents(block clipboard.Block, source engine.Ref) clipboard.Block {
+	updated := block
+	updated.SparseCells = append([]clipboard.SparseCell(nil), block.SparseCells...)
+	for index := range updated.SparseCells {
+		cell := &updated.SparseCells[index]
+		cell.Content = a.wb.RawContent(source.Sheet, engine.CellName(source.MinCol+cell.Col, source.MinRow+cell.Row))
+	}
+	return updated
+}
+
+func (a *App) writeAxisBlockAt(block clipboard.Block, sheet string, start int, adjustCopy bool) error {
+	axis, sourceStart := engine.AxisRow, 0
+	sourceCol, sourceRow, err := engine.ParseCellName(block.SourceCell)
+	if err != nil {
+		return err
+	}
+	sourceStart = sourceRow
+	destination := axisRef(sheet, axis, start, block.AxisCount)
+	if block.Kind == clipboard.BlockColumns {
+		axis, sourceStart = engine.AxisCol, sourceCol
+		destination = axisRef(sheet, axis, start, block.AxisCount)
+	}
+	if err := a.wb.ApplyAxisProperties(sheet, axis, start, block.AxisCount, block.AxisProps); err != nil {
+		return err
+	}
+	dCol, dRow := 0, start-sourceStart
+	if axis == engine.AxisCol {
+		dCol, dRow = start-sourceStart, 0
+	}
+	for _, sparse := range block.SparseCells {
+		col, row := destination.MinCol+sparse.Col, destination.MinRow+sparse.Row
+		content := sparse.Content
+		if adjustCopy && strings.HasPrefix(content, "=") {
+			content = engine.AdjustFormula(content, dCol, dRow)
+		}
+		cell := engine.CellName(col, row)
+		if err := a.wb.SetCell(sheet, cell, content); err != nil {
+			return err
+		}
+		if err := a.wb.ApplyCellMetadata(sheet, cell, sparse.Metadata); err != nil {
+			return err
+		}
+	}
+	for _, merged := range block.Merges {
+		ref := engine.Ref{Sheet: sheet,
+			MinCol: destination.MinCol + merged.MinCol, MinRow: destination.MinRow + merged.MinRow,
+			MaxCol: destination.MinCol + merged.MaxCol, MaxRow: destination.MinRow + merged.MaxRow}
+		if err := a.wb.MergeRange(sheet, ref); err != nil {
+			return err
+		}
+	}
+	return a.wb.ReplaceValidationsInRange(sheet, destination,
+		a.axisValidationsAt(block, destination, adjustCopy, dCol, dRow))
+}
+
+func (a *App) axisValidationsAt(block clipboard.Block, destination engine.Ref, adjustCopy bool, dCol, dRow int) []document.RangeValidation {
+	validations := make([]document.RangeValidation, 0, len(block.Validations))
+	for _, source := range block.Validations {
+		validation := source
+		validation.MinCol += destination.MinCol
+		validation.MaxCol += destination.MinCol
+		validation.MinRow += destination.MinRow
+		validation.MaxRow += destination.MinRow
+		if source.Rule != nil {
+			rule := *source.Rule
+			if adjustCopy {
+				rule.Formula1 = engine.AdjustFormula(rule.Formula1, dCol, dRow)
+				rule.Formula2 = engine.AdjustFormula(rule.Formula2, dCol, dRow)
+			}
+			validation.Rule = &rule
+		}
+		validations = append(validations, validation)
+	}
+	return validations
+}
+
+func (a *App) preflightAxisInsertion(sheet string, axis engine.Axis, before, count int) error {
+	limit := engine.MaxRows
+	if axis == engine.AxisCol {
+		limit = engine.MaxCols
+	}
+	if before < 1 || before > limit || count < 1 || before+count-1 > limit {
+		return errors.New("axis insertion would exceed the worksheet boundary")
+	}
+	for _, merged := range a.wb.MergedRanges(sheet) {
+		minAxis, maxAxis := merged.MinRow, merged.MaxRow
+		if axis == engine.AxisCol {
+			minAxis, maxAxis = merged.MinCol, merged.MaxCol
+		}
+		if minAxis < before && before <= maxAxis {
+			return fmt.Errorf("merged range %s:%s crosses the insertion line",
+				engine.CellName(merged.MinCol, merged.MinRow), engine.CellName(merged.MaxCol, merged.MaxRow))
+		}
+	}
+	for _, table := range a.wb.Tables() {
+		if table.Sheet != sheet {
+			continue
+		}
+		minAxis, maxAxis := table.MinRow, table.MaxRow
+		if axis == engine.AxisCol {
+			minAxis, maxAxis = table.MinCol, table.MaxCol
+		}
+		if minAxis < before && before <= maxAxis {
+			return fmt.Errorf("table %s crosses the insertion line", table.Name)
+		}
+	}
+	if filter, ok := a.wb.Filter(sheet); ok {
+		minAxis, maxAxis := filter.MinRow, filter.MaxRow
+		if axis == engine.AxisCol {
+			minAxis, maxAxis = filter.MinCol, filter.MaxCol
+		}
+		if minAxis < before && before <= maxAxis {
+			return errors.New("active AutoFilter crosses the insertion line")
+		}
+	}
+	tailStart := limit - count + 1
+	tail := axisRef(sheet, axis, tailStart, count)
+	stored, err := a.wb.StoredCellsInRange(sheet, tail.MinCol, tail.MinRow, tail.MaxCol, tail.MaxRow)
+	if err != nil {
+		return err
+	}
+	for _, cell := range stored {
+		index := cell.Row
+		if axis == engine.AxisCol {
+			index = cell.Col
+		}
+		if index >= before && (a.wb.RawContent(sheet, engine.CellName(cell.Col, cell.Row)) != "" ||
+			a.wb.CellMetadataAt(sheet, engine.CellName(cell.Col, cell.Row)).Style != nil) {
+			return errors.New("axis insertion would push stored data beyond the worksheet boundary")
+		}
+	}
+	return nil
+}
+
+func axisRef(sheet string, axis engine.Axis, start, count int) engine.Ref {
+	if axis == engine.AxisCol {
+		return engine.Ref{Sheet: sheet, MinCol: start, MinRow: 1, MaxCol: start + count - 1, MaxRow: engine.MaxRows}
+	}
+	return engine.Ref{Sheet: sheet, MinCol: 1, MinRow: start, MaxCol: engine.MaxCols, MaxRow: start + count - 1}
+}
+
+func (a *App) insertBlankAxes(sheet string, axis engine.Axis, start, count int) error {
+	if axis == engine.AxisCol {
+		return a.wb.InsertCols(sheet, start, count)
+	}
+	return a.wb.InsertRows(sheet, start, count)
+}
+
+func (a *App) removeAxes(sheet string, axis engine.Axis, start, count int) error {
+	if axis == engine.AxisCol {
+		return a.wb.RemoveCols(sheet, start, count)
+	}
+	return a.wb.RemoveRows(sheet, start, count)
+}
+
+func (a *App) selectMovedAxes(kind clipboard.BlockKind, start, count int) {
+	a.selectMovedAxesWithActive(kind, start, count, 0)
+}
+
+func (a *App) selectMovedAxesWithActive(kind clipboard.BlockKind, start, count, activeOffset int) {
+	activeOffset = clamp(activeOffset, 0, count-1)
+	if kind == clipboard.BlockRows {
+		a.cursor.Row = start + activeOffset
+		a.anchor = a.cursor
+		a.selectionKind = selectionRows
+		a.axisAnchor, a.axisFocus = start, start+count-1
+	} else {
+		a.cursor.Col = start + activeOffset
+		a.anchor = a.cursor
+		a.selectionKind = selectionColumns
+		a.axisAnchor, a.axisFocus = start, start+count-1
+	}
+	a.scrollIntoView(a.cursor)
+}
+
+func axisNoun(axis engine.Axis) string {
+	if axis == engine.AxisCol {
+		return "column"
+	}
+	return "row"
 }
 
 // pasteMode selects a Paste Special variant.
@@ -437,6 +1129,7 @@ func (a *App) pasteExternal(text string) {
 // workbook metadata such as panes. A failed operation restores the
 // before-snapshot rather than leaving the workbook half-modified.
 func (a *App) structuralOp(label string, op func() error) bool {
+	wasDirty := a.wb.Dirty()
 	before, err := a.wb.Snapshot()
 	if err != nil {
 		a.statusMsg = err.Error()
@@ -444,7 +1137,7 @@ func (a *App) structuralOp(label string, op func() error) bool {
 	}
 	if err := op(); err != nil {
 		a.statusMsg = err.Error()
-		if restoreErr := a.wb.RestoreSnapshot(before); restoreErr != nil {
+		if restoreErr := a.wb.RestoreSnapshotState(before, wasDirty); restoreErr != nil {
 			a.statusMsg = restoreErr.Error()
 		}
 		return false
@@ -452,6 +1145,15 @@ func (a *App) structuralOp(label string, op func() error) bool {
 	after, err := a.wb.Snapshot()
 	if err != nil {
 		a.statusMsg = err.Error()
+		if restoreErr := a.wb.RestoreSnapshotState(before, wasDirty); restoreErr != nil {
+			a.statusMsg = restoreErr.Error()
+		}
+		return false
+	}
+	if bytes.Equal(before, after) {
+		if restoreErr := a.wb.RestoreSnapshotState(before, wasDirty); restoreErr != nil {
+			a.statusMsg = restoreErr.Error()
+		}
 		return false
 	}
 	a.undoStack.Record(undo.Command{Label: label, BeforeSnapshot: before, AfterSnapshot: after})
@@ -460,7 +1162,11 @@ func (a *App) structuralOp(label string, op func() error) bool {
 
 // insertRows inserts blank rows above the selection, one per selected row.
 func (a *App) insertRows() {
-	sel := rectBetween(a.anchor, a.cursor)
+	if a.selectionKind == selectionColumns || a.selectionKind == selectionSheet {
+		a.statusMsg = "Select rows to insert rows"
+		return
+	}
+	sel := a.selectionRect()
 	count := sel.MaxRow - sel.MinRow + 1
 	if a.structuralOp("Insert Rows", func() error {
 		return a.wb.InsertRows(a.sheet, sel.MinRow, count)
@@ -472,7 +1178,11 @@ func (a *App) insertRows() {
 // insertCols inserts blank columns left of the selection, one per selected
 // column.
 func (a *App) insertCols() {
-	sel := rectBetween(a.anchor, a.cursor)
+	if a.selectionKind == selectionRows || a.selectionKind == selectionSheet {
+		a.statusMsg = "Select columns to insert columns"
+		return
+	}
+	sel := a.selectionRect()
 	count := sel.MaxCol - sel.MinCol + 1
 	if a.structuralOp("Insert Columns", func() error {
 		return a.wb.InsertCols(a.sheet, sel.MinCol, count)
@@ -484,24 +1194,46 @@ func (a *App) insertCols() {
 // deleteRows removes every row the selection touches. Formulas that referenced
 // the deleted rows resolve to #REF! (handled in RemoveRows), matching Excel.
 func (a *App) deleteRows() {
-	sel := rectBetween(a.anchor, a.cursor)
+	if a.selectionKind == selectionColumns || a.selectionKind == selectionSheet {
+		a.statusMsg = "Select rows to delete rows"
+		return
+	}
+	sel := a.selectionRect()
 	count := sel.MaxRow - sel.MinRow + 1
 	if a.structuralOp("Delete Rows", func() error {
 		return a.wb.RemoveRows(a.sheet, sel.MinRow, count)
 	}) {
-		a.setCursor(position{Col: a.cursor.Col, Row: sel.MinRow}, false)
+		activeCol := a.cursor.Col
+		a.cursor = position{Col: activeCol, Row: min(sel.MinRow, engine.MaxRows)}
+		a.anchor = a.cursor
+		if a.selectionKind == selectionRows {
+			a.selectRow(a.cursor.Row, false)
+		} else {
+			a.selectionKind = selectionCells
+		}
 		a.statusMsg = fmt.Sprintf("Deleted %d row(s)", count)
 	}
 }
 
 // deleteCols removes every column the selection touches.
 func (a *App) deleteCols() {
-	sel := rectBetween(a.anchor, a.cursor)
+	if a.selectionKind == selectionRows || a.selectionKind == selectionSheet {
+		a.statusMsg = "Select columns to delete columns"
+		return
+	}
+	sel := a.selectionRect()
 	count := sel.MaxCol - sel.MinCol + 1
 	if a.structuralOp("Delete Columns", func() error {
 		return a.wb.RemoveCols(a.sheet, sel.MinCol, count)
 	}) {
-		a.setCursor(position{Col: sel.MinCol, Row: a.cursor.Row}, false)
+		activeRow := a.cursor.Row
+		a.cursor = position{Col: min(sel.MinCol, engine.MaxCols), Row: activeRow}
+		a.anchor = a.cursor
+		if a.selectionKind == selectionColumns {
+			a.selectColumn(a.cursor.Col, false)
+		} else {
+			a.selectionKind = selectionCells
+		}
 		a.statusMsg = fmt.Sprintf("Deleted %d column(s)", count)
 	}
 }
@@ -510,22 +1242,40 @@ func (a *App) deleteCols() {
 // (cell-edit replay records content, not styles, so formats undo by
 // snapshot like structural changes do).
 func (a *App) applyNumberFormat(f document.NumberFormat, label string) {
-	sel := rectBetween(a.anchor, a.cursor)
+	sel := a.selectionRect()
 	if a.structuralOp("Format "+label, func() error {
-		return a.wb.SetNumberFormat(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow, f)
+		switch a.selectionKind {
+		case selectionColumns:
+			return a.wb.SetAxisNumberFormat(a.sheet, engine.AxisCol, sel.MinCol, sel.MaxCol, f)
+		case selectionRows:
+			return a.wb.SetAxisNumberFormat(a.sheet, engine.AxisRow, sel.MinRow, sel.MaxRow, f)
+		case selectionSheet:
+			return a.wb.SetAxisNumberFormat(a.sheet, engine.AxisCol, 1, engine.MaxCols, f)
+		default:
+			return a.wb.SetNumberFormat(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow, f)
+		}
 	}) {
-		a.statusMsg = "Formatted " + sel.String() + " as " + label
+		a.statusMsg = "Formatted " + a.selectionLabel() + " as " + label
 	}
 }
 
 // toggleFontStyle toggles bold/italic/underline over the selection, also as
 // a snapshot-undoable command.
 func (a *App) toggleFontStyle(attr document.FontStyle, label string) {
-	sel := rectBetween(a.anchor, a.cursor)
+	sel := a.selectionRect()
 	if a.structuralOp(label, func() error {
-		return a.wb.ToggleFontStyle(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow, attr)
+		switch a.selectionKind {
+		case selectionColumns:
+			return a.wb.ToggleAxisFontStyle(a.sheet, engine.AxisCol, sel.MinCol, sel.MaxCol, attr)
+		case selectionRows:
+			return a.wb.ToggleAxisFontStyle(a.sheet, engine.AxisRow, sel.MinRow, sel.MaxRow, attr)
+		case selectionSheet:
+			return a.wb.ToggleAxisFontStyle(a.sheet, engine.AxisCol, 1, engine.MaxCols, attr)
+		default:
+			return a.wb.ToggleFontStyle(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow, attr)
+		}
 	}) {
-		a.statusMsg = label + " " + sel.String()
+		a.statusMsg = label + " " + a.selectionLabel()
 	}
 }
 
@@ -873,6 +1623,7 @@ func (a *App) undo() {
 		return
 	}
 	a.ensureValidSheet()
+	a.normalizeSelectionAfterStructure()
 	a.statusMsg = "Undid " + label
 }
 
@@ -887,7 +1638,24 @@ func (a *App) redo() {
 		return
 	}
 	a.ensureValidSheet()
+	a.normalizeSelectionAfterStructure()
 	a.statusMsg = "Redid " + label
+}
+
+func (a *App) normalizeSelectionAfterStructure() {
+	a.cursor.Col = clamp(a.cursor.Col, 1, engine.MaxCols)
+	a.cursor.Row = clamp(a.cursor.Row, 1, engine.MaxRows)
+	a.anchor.Col = clamp(a.anchor.Col, 1, engine.MaxCols)
+	a.anchor.Row = clamp(a.anchor.Row, 1, engine.MaxRows)
+	switch a.selectionKind {
+	case selectionRows:
+		a.axisAnchor = clamp(a.axisAnchor, 1, engine.MaxRows)
+		a.axisFocus = clamp(a.axisFocus, 1, engine.MaxRows)
+	case selectionColumns:
+		a.axisAnchor = clamp(a.axisAnchor, 1, engine.MaxCols)
+		a.axisFocus = clamp(a.axisFocus, 1, engine.MaxCols)
+	}
+	a.scrollIntoView(a.cursor)
 }
 
 // save handles Ctrl+S: save in place, or fall into save-as for a new file.
@@ -1207,22 +1975,41 @@ func (a *App) resetActiveSheetPosition() {
 	a.topRow, a.leftCol = 1, 1
 	p := a.normalizeNavigablePosition(position{Col: 1, Row: 1}, 1, 1)
 	a.cursor, a.anchor = p, p
+	a.selectionKind = selectionCells
+	a.axisAnchor, a.axisFocus = 0, 0
 }
 
 // selectionStats renders the status bar aggregates for multi-cell
 // selections, like Excel's SUM/AVG/COUNT readout.
 func (a *App) selectionStats() string {
-	sel := rectBetween(a.anchor, a.cursor)
+	sel := a.selectionRect()
 	if sel.isSingleCell() {
-		return ""
-	}
-	cells := (sel.MaxRow - sel.MinRow + 1) * (sel.MaxCol - sel.MinCol + 1)
-	if cells > statsCellLimit {
 		return ""
 	}
 
 	var sum float64
 	var count int
+	if a.selectionKind != selectionCells {
+		stored, err := a.wb.StoredCellsInRange(a.sheet, sel.MinCol, sel.MinRow, sel.MaxCol, sel.MaxRow)
+		if err != nil || len(stored) > statsCellLimit {
+			return ""
+		}
+		for _, storedCell := range stored {
+			v := a.wb.DisplayValue(a.sheet, engine.CellName(storedCell.Col, storedCell.Row))
+			if n, err := strconv.ParseFloat(strings.ReplaceAll(v, ",", ""), 64); err == nil && v != "" {
+				sum += n
+				count++
+			}
+		}
+		if count == 0 {
+			return ""
+		}
+		return fmt.Sprintf("SUM=%s  AVG=%s  CNT=%d", trimFloat(sum), trimFloat(sum/float64(count)), count)
+	}
+	cells := (sel.MaxRow - sel.MinRow + 1) * (sel.MaxCol - sel.MinCol + 1)
+	if cells > statsCellLimit {
+		return ""
+	}
 	for row := sel.MinRow; row <= sel.MaxRow; row++ {
 		for col := sel.MinCol; col <= sel.MaxCol; col++ {
 			v := a.wb.DisplayValue(a.sheet, engine.CellName(col, row))

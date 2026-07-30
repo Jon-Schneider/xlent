@@ -26,6 +26,7 @@ const (
 	actPasteValues
 	actPasteTranspose
 	actPasteFormats
+	actInsertAxisPayload
 	actClear
 	actInsertRows
 	actInsertCols
@@ -102,7 +103,7 @@ func defaultMenus() []menu {
 			{label: "Paste Values", action: actPasteValues},
 			{label: "Paste Transpose", action: actPasteTranspose},
 			{label: "Paste Formats", action: actPasteFormats},
-			{label: "Clear", shortcut: "Del", action: actClear},
+			{label: "Clear Contents", shortcut: "Del", action: actClear},
 			divider,
 			{label: "Insert Rows", shortcut: "Ctrl++", action: actInsertRows},
 			{label: "Insert Columns", action: actInsertCols},

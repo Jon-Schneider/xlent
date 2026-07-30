@@ -25,6 +25,11 @@ type App struct {
 
 	cursor position // active cell
 	anchor position // selection anchor; equals cursor when no range is active
+	// selectionKind distinguishes logical whole-axis selections from ordinary
+	// rectangles. cursor remains the independent active cell.
+	selectionKind selectionKind
+	axisAnchor    int
+	axisFocus     int
 
 	topRow  int // first visible sheet row
 	leftCol int // first visible sheet column
@@ -70,7 +75,8 @@ type App struct {
 
 	// colResize tracks an in-progress column-width drag started on a column
 	// edge in the header row.
-	colResize colResize
+	colResize   colResize
+	headingDrag headingDrag
 
 	// editOrigin records where the current edit began. Cross-sheet pointing
 	// can switch the displayed sheet mid-edit; commit and cancel return here
@@ -200,6 +206,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseReleaseMsg:
 		a.finishColumnResize()
+		a.finishHeadingDrag(tea.Mouse(msg))
 
 	case tea.MouseWheelMsg:
 		if a.attributions.open {
@@ -597,6 +604,9 @@ func (a *App) handleHeadingMenuClick(m tea.Mouse) (bool, tea.Model, tea.Cmd) {
 		m.Y >= y && m.Y < y+len(a.headingMenu.items)
 	if inside && m.Button == tea.MouseLeft {
 		a.headingMenu.selected = m.Y - y
+		if a.headingMenu.items[a.headingMenu.selected].divider {
+			return true, a, nil
+		}
 		action := a.headingMenu.items[a.headingMenu.selected].action
 		sheetTarget := a.headingMenu.sheetTarget
 		a.headingMenu.close()
@@ -736,6 +746,8 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.pasteSpecial(pasteTranspose)
 	case actPasteFormats:
 		a.pasteSpecial(pasteFormats)
+	case actInsertAxisPayload:
+		a.insertAxisPayload()
 	case actClear:
 		a.clearSelection()
 	case actInsertRows:
@@ -900,6 +912,9 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return a, a.copySelection(true)
 	case "ctrl+v":
 		a.pasteFromRegister()
+	case "esc":
+		a.register.Clear()
+		a.headingDrag = headingDrag{}
 
 	case "f2":
 		a.startEdit(a.wb.RawContent(a.sheet, a.cursor.cellName()), editModeInPlace)
@@ -975,6 +990,10 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "ctrl+a":
 		a.selectUsedRange()
+	case "ctrl+space":
+		a.selectColumn(a.cursor.Col, false)
+	case "shift+space":
+		a.selectRow(a.cursor.Row, false)
 
 	case "ctrl+b":
 		a.toggleFontStyle(document.FontBold, "Bold")
@@ -1002,13 +1021,18 @@ func (a *App) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "f9":
 		a.recalculateAll()
 
-	// Excel disambiguates row vs column insert/delete by whole-row/column
-	// selection, which our selection model doesn't track; the shortcut does
-	// rows (the common case) and the Edit menu covers columns.
 	case "ctrl++", "ctrl+=":
-		a.insertRows()
+		if a.selectionKind == selectionColumns {
+			a.insertCols()
+		} else {
+			a.insertRows()
+		}
 	case "ctrl+-":
-		a.deleteRows()
+		if a.selectionKind == selectionColumns {
+			a.deleteCols()
+		} else {
+			a.deleteRows()
+		}
 
 	default:
 		// Plain typing starts an edit that replaces the cell (Excel's
@@ -1064,6 +1088,8 @@ func (a *App) setCursor(p position, extend bool) {
 	a.cursor = p
 	if !extend {
 		a.anchor = p
+		a.selectionKind = selectionCells
+		a.axisAnchor, a.axisFocus = 0, 0
 	}
 	a.scrollIntoView(a.cursor)
 }
@@ -1159,8 +1185,18 @@ func (a *App) dataJumpTarget(dCol, dRow, limitCol, limitRow int) position {
 func (a *App) selectUsedRange() {
 	maxCol, maxRow := a.wb.UsedRange(a.sheet)
 	if maxCol == 0 {
+		a.selectionKind = selectionSheet
+		a.anchor = position{Col: 1, Row: 1}
 		return
 	}
+	used := rect{MinCol: 1, MinRow: 1, MaxCol: maxCol, MaxRow: maxRow}
+	if a.selectionKind == selectionCells && a.selectionRect() == used {
+		a.selectionKind = selectionSheet
+		a.anchor = position{Col: 1, Row: 1}
+		return
+	}
+	a.selectionKind = selectionCells
+	a.axisAnchor, a.axisFocus = 0, 0
 	a.anchor = position{Col: 1, Row: 1}
 	a.cursor = position{Col: maxCol, Row: maxRow}
 	a.scrollIntoView(a.cursor)
@@ -1228,6 +1264,8 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 		return
 	}
 	extend := m.Mod.Contains(tea.ModShift)
+	command := m.Mod.Contains(tea.ModMeta) || m.Mod.Contains(tea.ModSuper)
+	a.headingDrag = headingDrag{}
 
 	// Sheet tabs.
 	if m.Y == a.layout.tabsY {
@@ -1247,16 +1285,20 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 		return
 	}
 
-	// Column header: a column edge starts a width drag; anywhere else
-	// selects the whole used height of that column.
+	// Column header: a column edge starts a width drag; anywhere else selects
+	// the complete logical column while leaving the active row unchanged.
 	if m.Y == a.layout.headerY {
+		if m.X < a.layout.gutterW {
+			a.selectionKind = selectionSheet
+			a.axisAnchor, a.axisFocus = 0, 0
+			a.anchor = position{Col: 1, Row: 1}
+			return
+		}
 		if a.startColResizeAt(m.X) {
 			return
 		}
 		if col := a.layout.colAt(m.X); col > 0 {
-			_, maxRow := a.wb.UsedRange(a.sheet)
-			a.anchor = position{Col: col, Row: 1}
-			a.cursor = position{Col: col, Row: max(maxRow, 1)}
+			a.beginHeadingPress(selectionColumns, col, m.X, m.Y, extend, command)
 		}
 		return
 	}
@@ -1266,16 +1308,15 @@ func (a *App) handleMouseClick(m tea.Mouse) {
 		return
 	}
 
-	// Row gutter: select the whole used width of that row.
+	// Row gutter: select the complete logical row while leaving the active
+	// column unchanged.
 	if m.X < a.layout.gutterW {
-		maxCol, _ := a.wb.UsedRange(a.sheet)
-		a.anchor = position{Col: 1, Row: row}
-		a.cursor = position{Col: max(maxCol, 1), Row: row}
+		a.beginHeadingPress(selectionRows, row, m.X, m.Y, extend, command)
 		return
 	}
 
 	if col := a.layout.colAt(m.X); col > 0 {
-		a.setCursor(position{Col: col, Row: row}, extend)
+		a.selectOrdinaryCell(position{Col: col, Row: row}, extend, command)
 	}
 }
 
@@ -1303,33 +1344,82 @@ func (a *App) openHeadingMenu(m tea.Mouse) {
 
 	if m.Y == a.layout.headerY {
 		if col := a.layout.colAt(m.X); col > 0 {
-			_, maxRow := a.wb.UsedRange(a.sheet)
-			a.anchor = position{Col: col, Row: 1}
-			a.cursor = position{Col: col, Row: max(maxRow, 1)}
+			if a.selectionKind != selectionColumns || !a.selectionRect().contains(position{Col: col, Row: a.cursor.Row}) {
+				a.selectColumn(col, false)
+			} else {
+				a.cursor.Col = col
+			}
 			a.menuBar.close()
-			a.headingMenu.openAt(m.X, a.layout.headerY+1, []menuItem{
-				{label: "Insert Column Left", action: actInsertCols},
-				{label: "Delete Column", action: actDeleteCols},
-			})
+			items := []menuItem{
+				{label: "Cut Columns", action: actCut},
+				{label: "Copy Columns", action: actCopy},
+			}
+			if block, ok := a.register.Get(); ok && block.Kind == clipboard.BlockColumns {
+				items = append(items, menuItem{label: "Paste Columns", action: actPaste})
+				insertLabel := "Insert Copied Columns Left"
+				if block.Cut {
+					insertLabel = "Insert Cut Columns Left"
+				}
+				items = append(items, menuItem{label: insertLabel, action: actInsertAxisPayload})
+			}
+			items = append(items,
+				menuItem{label: "Clear Contents", action: actClear},
+				menuItem{divider: true},
+				menuItem{label: "Insert Columns Left", action: actInsertCols},
+				menuItem{label: "Delete Columns", action: actDeleteCols},
+			)
+			a.headingMenu.openAt(m.X, a.layout.headerY+1, items)
 		}
 		return
 	}
 
 	if row := a.layout.rowAt(m.Y); row > 0 && m.X < a.layout.gutterW {
-		maxCol, _ := a.wb.UsedRange(a.sheet)
-		a.anchor = position{Col: 1, Row: row}
-		a.cursor = position{Col: max(maxCol, 1), Row: row}
+		if a.selectionKind != selectionRows || !a.selectionRect().contains(position{Col: a.cursor.Col, Row: row}) {
+			a.selectRow(row, false)
+		} else {
+			a.cursor.Row = row
+		}
 		a.menuBar.close()
-		a.headingMenu.openAt(a.layout.gutterW, m.Y, []menuItem{
-			{label: "Insert Row Above", action: actInsertRows},
-			{label: "Delete Row", action: actDeleteRows},
-		})
+		items := []menuItem{
+			{label: "Cut Rows", action: actCut},
+			{label: "Copy Rows", action: actCopy},
+		}
+		if block, ok := a.register.Get(); ok && block.Kind == clipboard.BlockRows {
+			items = append(items, menuItem{label: "Paste Rows", action: actPaste})
+			insertLabel := "Insert Copied Rows Above"
+			if block.Cut {
+				insertLabel = "Insert Cut Rows Above"
+			}
+			items = append(items, menuItem{label: insertLabel, action: actInsertAxisPayload})
+		}
+		items = append(items,
+			menuItem{label: "Clear Contents", action: actClear},
+			menuItem{divider: true},
+			menuItem{label: "Insert Rows Above", action: actInsertRows},
+			menuItem{label: "Delete Rows", action: actDeleteRows},
+		)
+		a.headingMenu.openAt(a.layout.gutterW, m.Y, items)
 	}
 }
 
 // extendTo grows the selection — or the pointed reference, while a formula
 // edit is picking one — toward the cell under a drag.
 func (a *App) extendTo(m tea.Mouse) {
+	if a.updateHeadingReorder(m) {
+		return
+	}
+	if a.headingDrag.kind == selectionColumns {
+		if col := a.layout.colAt(m.X); col > 0 {
+			a.selectColumn(col, true)
+		}
+		return
+	}
+	if a.headingDrag.kind == selectionRows {
+		if row := a.layout.rowAt(m.Y); row > 0 {
+			a.selectRow(row, true)
+		}
+		return
+	}
 	row := a.layout.rowAt(m.Y)
 	col := a.layout.colAt(m.X)
 	if row == 0 || col == 0 {
@@ -1339,7 +1429,7 @@ func (a *App) extendTo(m tea.Mouse) {
 		a.pointTo(position{Col: col, Row: row}, true)
 		return
 	}
-	a.setCursor(position{Col: col, Row: row}, true)
+	a.selectOrdinaryCell(position{Col: col, Row: row}, true, false)
 }
 
 func (a *App) handleWheel(m tea.Mouse) {
@@ -1484,8 +1574,7 @@ func (a *App) renderStatusBar(width int) string {
 		left += styleStatusDirty.Render(" [+]")
 	}
 
-	sel := rectBetween(a.anchor, a.cursor)
-	middle := sel.String()
+	middle := a.selectionLabel()
 	if stats := a.selectionStats(); stats != "" {
 		middle += "   " + stats
 	}

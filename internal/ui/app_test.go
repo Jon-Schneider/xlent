@@ -189,8 +189,11 @@ func TestColumnHeaderClickSelectsColumn(t *testing.T) {
 
 	app.Update(tea.MouseClickMsg{X: app.layout.colX[0] + 1, Y: app.layout.headerY, Button: tea.MouseLeft})
 
-	if got := rectBetween(app.anchor, app.cursor).String(); got != "A1:A5" {
-		t.Errorf("selection = %s, want A1:A5 (used height of column A)", got)
+	if got := app.selectionLabel(); got != "A:A" {
+		t.Errorf("selection = %s, want logical column A:A", got)
+	}
+	if app.cursor != (position{Col: 1, Row: 1}) {
+		t.Errorf("active cell = %+v, want A1 retained independently", app.cursor)
 	}
 }
 

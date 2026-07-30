@@ -58,6 +58,22 @@ func (r rect) String() string {
 // selectionRect expands the selected rectangle to include any merged cells it
 // touches, matching the visible selection users act on.
 func (a *App) selectionRect() rect {
+	switch a.selectionKind {
+	case selectionRows:
+		anchor, focus := a.axisAnchor, a.axisFocus
+		if anchor == 0 {
+			anchor, focus = a.anchor.Row, a.cursor.Row
+		}
+		return rect{MinCol: 1, MinRow: min(anchor, focus), MaxCol: engine.MaxCols, MaxRow: max(anchor, focus)}
+	case selectionColumns:
+		anchor, focus := a.axisAnchor, a.axisFocus
+		if anchor == 0 {
+			anchor, focus = a.anchor.Col, a.cursor.Col
+		}
+		return rect{MinCol: min(anchor, focus), MinRow: 1, MaxCol: max(anchor, focus), MaxRow: engine.MaxRows}
+	case selectionSheet:
+		return rect{MinCol: 1, MinRow: 1, MaxCol: engine.MaxCols, MaxRow: engine.MaxRows}
+	}
 	sel := rectBetween(a.anchor, a.cursor)
 	for {
 		before := sel
@@ -319,6 +335,9 @@ func (a *App) renderGrid(layout gridLayout) string {
 	b.WriteString(styleHeader.Render(strings.Repeat(" ", layout.gutterW)))
 	for _, c := range layout.cols {
 		name := engine.ColumnName(c)
+		if a.headingDrag.reordering && a.headingDrag.kind == selectionColumns && a.headingDrag.dropBefore == c {
+			name = "┃" + name
+		}
 		// A filter marks its columns: ▾ when a criterion is set, ▿ otherwise.
 		if filtering && c >= a.filter.minCol && c <= a.filter.maxCol {
 			if a.filter.criteria[c] != "" {
@@ -340,7 +359,12 @@ func (a *App) renderGrid(layout gridLayout) string {
 		if row >= sel.MinRow && row <= sel.MaxRow {
 			gutterStyle = styleHeaderActive
 		}
-		b.WriteString(gutterStyle.Width(layout.gutterW).MaxWidth(layout.gutterW).Align(lipgloss.Right).Render(strconv.Itoa(row) + " "))
+		gutterLabel := strconv.Itoa(row) + " "
+		if a.headingDrag.reordering && a.headingDrag.kind == selectionRows && a.headingDrag.dropBefore == row {
+			gutterLabel = strings.Repeat("━", layout.gutterW)
+			gutterStyle = styleInsertionLine
+		}
+		b.WriteString(gutterStyle.Width(layout.gutterW).MaxWidth(layout.gutterW).Align(lipgloss.Right).Render(gutterLabel))
 
 		// Overflow needs the whole row planned before anything is drawn, since
 		// one cell's text can spill across its neighbors: plan, resolve spill,

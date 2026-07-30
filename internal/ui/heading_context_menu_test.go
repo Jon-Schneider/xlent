@@ -20,11 +20,11 @@ func TestRightClickColumnHeadingOpensStructuralMenuForClickedColumn(t *testing.T
 	if !app.headingMenu.visible {
 		t.Fatal("right-clicking a column heading must open its context menu")
 	}
-	if got := rectBetween(app.anchor, app.cursor).String(); got != "B1:B5" {
+	if got := app.selectionLabel(); got != "B:B" {
 		t.Errorf("selection = %s, want clicked column B", got)
 	}
 	rendered := ansi.Strip(app.View().Content)
-	for _, label := range []string{"Insert Column Left", "Delete Column"} {
+	for _, label := range []string{"Cut Columns", "Copy Columns", "Clear Contents", "Insert Columns Left", "Delete Columns"} {
 		if !strings.Contains(rendered, label) {
 			t.Errorf("column context menu missing %q", label)
 		}
@@ -39,8 +39,7 @@ func TestColumnHeadingContextMenuInsertsToLeft(t *testing.T) {
 		Y:      app.layout.headerY,
 		Button: tea.MouseRight,
 	})
-	menuX, menuY, _ := app.headingMenuBounds()
-	app.Update(tea.MouseClickMsg{X: menuX + 1, Y: menuY, Button: tea.MouseLeft})
+	clickHeadingMenuItem(t, app, "Insert Columns Left")
 
 	if app.headingMenu.visible {
 		t.Error("context menu must close after executing an item")
@@ -61,8 +60,7 @@ func TestColumnHeadingContextMenuDeletesClickedColumn(t *testing.T) {
 		Y:      app.layout.headerY,
 		Button: tea.MouseRight,
 	})
-	menuX, menuY, _ := app.headingMenuBounds()
-	app.Update(tea.MouseClickMsg{X: menuX + 1, Y: menuY + 1, Button: tea.MouseLeft})
+	clickHeadingMenuItem(t, app, "Delete Columns")
 
 	if got := wb.RawContent(app.sheet, "A1"); got != "10" {
 		t.Errorf("A1 = %q, want column A left untouched", got)
@@ -80,8 +78,7 @@ func TestRowHeadingContextMenuInsertsAbove(t *testing.T) {
 		Y:      app.layout.gridY0 + 1,
 		Button: tea.MouseRight,
 	})
-	menuX, menuY, _ := app.headingMenuBounds()
-	app.Update(tea.MouseClickMsg{X: menuX + 1, Y: menuY, Button: tea.MouseLeft})
+	clickHeadingMenuItem(t, app, "Insert Rows Above")
 
 	if got := wb.RawContent(app.sheet, "A2"); got != "" {
 		t.Errorf("A2 = %q, want blank inserted row", got)
@@ -106,11 +103,10 @@ func TestRowHeadingContextMenuDeletesClickedRow(t *testing.T) {
 	if !app.headingMenu.visible {
 		t.Fatal("right-clicking a row heading must open its context menu")
 	}
-	if got := rectBetween(app.anchor, app.cursor).String(); got != "A2:B2" {
+	if got := app.selectionLabel(); got != "2:2" {
 		t.Errorf("selection = %s, want clicked row 2", got)
 	}
-	menuX, menuY, _ := app.headingMenuBounds()
-	app.Update(tea.MouseClickMsg{X: menuX + 1, Y: menuY + 1, Button: tea.MouseLeft})
+	clickHeadingMenuItem(t, app, "Delete Rows")
 
 	if got := wb.RawContent(app.sheet, "A2"); got != "" {
 		t.Errorf("A2 = %q, want row 2 deleted", got)
@@ -132,6 +128,22 @@ func TestMouseoverHighlightsHeadingContextMenuItem(t *testing.T) {
 	app.Update(tea.MouseMotionMsg{X: menuX + 1, Y: menuY + 1})
 
 	if app.headingMenu.selected != 1 {
-		t.Fatalf("highlighted item = %d, want Delete Column at 1", app.headingMenu.selected)
+		t.Fatalf("highlighted item = %d, want Copy Columns at 1", app.headingMenu.selected)
 	}
+}
+
+func clickHeadingMenuItem(t *testing.T, app *App, label string) {
+	t.Helper()
+	item := -1
+	for index, candidate := range app.headingMenu.items {
+		if candidate.label == label {
+			item = index
+			break
+		}
+	}
+	if item < 0 {
+		t.Fatalf("heading menu does not contain %q", label)
+	}
+	menuX, menuY, _ := app.headingMenuBounds()
+	app.Update(tea.MouseClickMsg{X: menuX + 1, Y: menuY + item, Button: tea.MouseLeft})
 }

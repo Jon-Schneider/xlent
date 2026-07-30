@@ -1,6 +1,11 @@
 package document
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/Jon-Schneider/xlent/internal/engine"
+)
 
 func TestSetNumberFormatChangesRenderingNotContent(t *testing.T) {
 	w := New()
@@ -139,5 +144,48 @@ func TestSetNumberFormatBackToGeneralRestoresPlainRendering(t *testing.T) {
 
 	if got := w.DisplayValue(sheet, "A1"); got != "1234.5" {
 		t.Errorf("display = %q, want plain 1234.5 back", got)
+	}
+}
+
+func TestWholeColumnFormatAppliesToLaterCellsAndRoundTrips(t *testing.T) {
+	w := New()
+	sheet := w.Sheets()[0]
+	mustSetCell(t, w, sheet, "A1", "12")
+	if err := w.SetAxisNumberFormat(sheet, engine.AxisCol, 1, 1, FormatCurrency); err != nil {
+		t.Fatal(err)
+	}
+	mustSetCell(t, w, sheet, "A1000", "34")
+
+	path := filepath.Join(t.TempDir(), "axis-format.xlsx")
+	if err := w.SaveAs(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reloaded.Close()
+
+	for _, cell := range []string{"A1", "A1000"} {
+		if got := reloaded.CellStyleAt(sheet, cell).NumFmtCustom; got != FormatCurrency.Custom {
+			t.Errorf("%s custom format = %q, want %q", cell, got, FormatCurrency.Custom)
+		}
+	}
+}
+
+func TestCapturingAllDefaultRowPropertiesStaysSparse(t *testing.T) {
+	w := New()
+	defer w.Close()
+	sheet := w.Sheets()[0]
+
+	properties, err := w.CaptureAxisProperties(sheet, engine.AxisRow, 1, engine.MaxRows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(properties) != 0 {
+		t.Errorf("default row properties = %d entries, want sparse empty map", len(properties))
 	}
 }

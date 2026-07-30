@@ -70,8 +70,8 @@ func TestHeaderClickAwayFromEdgeStillSelectsColumn(t *testing.T) {
 	if app.colResize.active {
 		t.Fatal("click in the middle of a header cell must not start a resize")
 	}
-	if got := rectBetween(app.anchor, app.cursor).String(); got != "A1:A5" {
-		t.Errorf("selection = %s, want the whole used column A1:A5", got)
+	if got := app.selectionLabel(); got != "A:A" {
+		t.Errorf("selection = %s, want the whole logical column A:A", got)
 	}
 }
 

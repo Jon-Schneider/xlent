@@ -78,8 +78,9 @@ Windows-Excel-style `Ctrl` bindings.
 - **Copy/cut/paste with Excel semantics.** Copying adjusts relative
   references; cutting drags references along with the move (`$`-anchors pin
   against copies, not moves). External paste via the terminal clipboard, TSV
-  in and out. Paste Special variants paste values, formats, or a transposed
-  block from the Edit menu.
+  in and out. Whole rows and columns use sparse internal payloads that retain
+  dimensions and metadata. Paste Special variants paste values, formats, or a
+  transposed block from the Edit menu.
 - **Structure editing.** Insert/delete rows (`Ctrl++` / `Ctrl+-`) and
   columns; add, rename, and delete sheets. Renaming a sheet rewrites every
   formula that referenced it by name.
@@ -104,9 +105,10 @@ Windows-Excel-style `Ctrl` bindings.
 - **Faithful round-trips.** `xlent` is designed to preserve workbook content it
   does not edit where supported by Excelize, including styles, widths, other
   sheets, and content it cannot display.
-- **Mouse everywhere.** Click and drag to select, drag column edges in the
-  header to resize, right-click row or column headings to insert/delete, click
-  tabs, scroll with the wheel, use the menus.
+- **Mouse everywhere.** Click and drag to select, click headings for complete
+  row/column selections, drag a selected heading band to reorder it at an
+  insertion line, drag column edges to resize, use heading context menus,
+  click tabs, scroll with the wheel, use the menus.
 
 ## Formula compatibility
 
@@ -143,6 +145,7 @@ unencrypted copy from a spreadsheet application before opening it in `xlent`.
 | Arrows, `PgUp`/`PgDn`, `Home`, `Ctrl+Home` | Move around |
 | `Ctrl+Arrow` / `Ctrl+Shift+Arrow` | Jump to data edge / extend to it |
 | `Shift+Arrow`, `F8` | Extend selection |
+| `Ctrl+Space` / `Shift+Space` | Select the active column / row |
 | `Ctrl+A` | Select used range |
 | `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next sheet (mid-formula: cross-sheet pointing) |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste |

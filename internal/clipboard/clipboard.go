@@ -18,6 +18,7 @@ import (
 // cells are empty. Display and Styles may be nil for blocks captured before
 // Paste Special existed or by callers that don't need them.
 type Block struct {
+	Kind        BlockKind
 	SourceSheet string
 	SourceCell  string // A1 name of the block's top-left cell
 	Contents    [][]string
@@ -25,7 +26,31 @@ type Block struct {
 	Styles      [][]document.CellStyle
 	Metadata    [][]document.CellMetadata
 	Merges      []MergedRange
+	SparseCells []SparseCell
+	AxisCount   int
+	AxisProps   map[int]document.AxisProperties
+	Validations []document.RangeValidation
 	Cut         bool
+}
+
+// BlockKind keeps whole-axis intent in the internal clipboard. BlockCells is
+// the zero value for compatibility with ordinary rectangular clipboard data.
+type BlockKind uint8
+
+const (
+	BlockCells BlockKind = iota
+	BlockRows
+	BlockColumns
+	BlockSheet
+)
+
+// SparseCell is a physical cell relative to an axis payload's logical
+// top-left corner. Empty physical cells are retained when they carry metadata.
+type SparseCell struct {
+	Col, Row int
+	Content  string
+	Display  string
+	Metadata document.CellMetadata
 }
 
 // MergedRange is a zero-based merged rectangle relative to a block's

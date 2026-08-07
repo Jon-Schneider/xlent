@@ -785,6 +785,14 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.deleteRows()
 	case actDeleteCols:
 		a.deleteCols()
+	case actHideRows:
+		a.setSelectedRowsVisible(false)
+	case actUnhideRows:
+		a.setSelectedRowsVisible(true)
+	case actHideCols:
+		a.setSelectedColumnsVisible(false)
+	case actUnhideCols:
+		a.setSelectedColumnsVisible(true)
 	case actSelectAll:
 		a.selectUsedRange()
 	case actFind:
@@ -1414,6 +1422,9 @@ func (a *App) openHeadingMenu(m tea.Mouse) {
 			items = append(items,
 				menuItem{label: "Clear Contents", action: actClear},
 				menuItem{divider: true},
+				menuItem{label: "Hide Columns", action: actHideCols},
+				menuItem{label: "Unhide Columns", action: actUnhideCols},
+				menuItem{divider: true},
 				menuItem{label: "Insert Columns Left", action: actInsertCols},
 				menuItem{label: "Delete Columns", action: actDeleteCols},
 			)
@@ -1443,6 +1454,9 @@ func (a *App) openHeadingMenu(m tea.Mouse) {
 		}
 		items = append(items,
 			menuItem{label: "Clear Contents", action: actClear},
+			menuItem{divider: true},
+			menuItem{label: "Hide Rows", action: actHideRows},
+			menuItem{label: "Unhide Rows", action: actUnhideRows},
 			menuItem{divider: true},
 			menuItem{label: "Insert Rows Above", action: actInsertRows},
 			menuItem{label: "Delete Rows", action: actDeleteRows},

@@ -24,10 +24,56 @@ func TestRightClickColumnHeadingOpensStructuralMenuForClickedColumn(t *testing.T
 		t.Errorf("selection = %s, want clicked column B", got)
 	}
 	rendered := ansi.Strip(app.View().Content)
-	for _, label := range []string{"Cut Columns", "Copy Columns", "Clear Contents", "Insert Columns Left", "Delete Columns"} {
+	for _, label := range []string{"Cut Columns", "Copy Columns", "Clear Contents", "Hide Columns", "Unhide Columns", "Insert Columns Left", "Delete Columns"} {
 		if !strings.Contains(rendered, label) {
 			t.Errorf("column context menu missing %q", label)
 		}
+	}
+}
+
+func TestColumnHeadingContextMenuHidesAndUnhidesColumns(t *testing.T) {
+	app, workbook := setupTestApp(t)
+
+	app.Update(tea.MouseClickMsg{
+		X:      app.layout.colX[1] + 1,
+		Y:      app.layout.headerY,
+		Button: tea.MouseRight,
+	})
+	clickHeadingMenuItem(t, app, "Hide Columns")
+
+	if workbook.ColVisible(app.sheet, 2) {
+		t.Fatal("Hide Columns must hide the selected column")
+	}
+	for _, col := range app.computeLayout().cols {
+		if col == 2 {
+			t.Fatal("hidden column appeared in the layout")
+		}
+	}
+	if got := app.statusMsg; got != "Hid 1 column(s)" {
+		t.Errorf("status = %q, want hide confirmation", got)
+	}
+
+	app.execMenuAction(actUnhideCols)
+	if !workbook.ColVisible(app.sheet, 2) {
+		t.Fatal("Unhide Columns must restore the selected column")
+	}
+	if got := app.statusMsg; got != "Unhid 1 column(s)" {
+		t.Errorf("status = %q, want unhide confirmation", got)
+	}
+}
+
+func TestHidingColumnsIsUndoable(t *testing.T) {
+	app, workbook := setupTestApp(t)
+	app.selectColumn(2, false)
+
+	app.execMenuAction(actHideCols)
+	app.undo()
+	if !workbook.ColVisible(app.sheet, 2) {
+		t.Fatal("undo must restore a hidden column")
+	}
+	app.redo()
+	if workbook.ColVisible(app.sheet, 2) {
+		t.Fatal("redo must hide the column again")
 	}
 }
 
@@ -113,6 +159,57 @@ func TestRowHeadingContextMenuDeletesClickedRow(t *testing.T) {
 	}
 	if got := wb.RawContent(app.sheet, "A4"); got != "lonely" {
 		t.Errorf("A4 = %q, want lonely shifted up from A5", got)
+	}
+}
+
+func TestRowHeadingContextMenuHidesAndUnhidesRows(t *testing.T) {
+	app, workbook := setupTestApp(t)
+
+	app.Update(tea.MouseClickMsg{
+		X:      app.layout.gutterW - 1,
+		Y:      app.layout.gridY0 + 1,
+		Button: tea.MouseRight,
+	})
+	for _, label := range []string{"Hide Rows", "Unhide Rows"} {
+		if !strings.Contains(ansi.Strip(app.View().Content), label) {
+			t.Errorf("row context menu missing %q", label)
+		}
+	}
+	clickHeadingMenuItem(t, app, "Hide Rows")
+
+	if workbook.RowVisible(app.sheet, 2) {
+		t.Fatal("Hide Rows must hide the selected row")
+	}
+	for _, row := range app.computeLayout().rowsList {
+		if row == 2 {
+			t.Fatal("hidden row appeared in the layout")
+		}
+	}
+	if got := app.statusMsg; got != "Hid 1 row(s)" {
+		t.Errorf("status = %q, want hide confirmation", got)
+	}
+
+	app.execMenuAction(actUnhideRows)
+	if !workbook.RowVisible(app.sheet, 2) {
+		t.Fatal("Unhide Rows must restore the selected row")
+	}
+	if got := app.statusMsg; got != "Unhid 1 row(s)" {
+		t.Errorf("status = %q, want unhide confirmation", got)
+	}
+}
+
+func TestHidingRowsIsUndoable(t *testing.T) {
+	app, workbook := setupTestApp(t)
+	app.selectRow(2, false)
+
+	app.execMenuAction(actHideRows)
+	app.undo()
+	if !workbook.RowVisible(app.sheet, 2) {
+		t.Fatal("undo must restore a hidden row")
+	}
+	app.redo()
+	if workbook.RowVisible(app.sheet, 2) {
+		t.Fatal("redo must hide the row again")
 	}
 }
 

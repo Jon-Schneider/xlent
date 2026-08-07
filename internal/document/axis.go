@@ -214,6 +214,63 @@ func defaultAxisProperties(axis engine.Axis) AxisProperties {
 	return AxisProperties{Size: defaultExcelColumnWidth}
 }
 
+// SetColumnsVisible changes a contiguous range of columns without altering
+// their other axis properties. The cached visibility semantics are reloaded so
+// layout and navigation observe the change immediately.
+func (w *Workbook) SetColumnsVisible(sheet string, start, end int, visible bool) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
+	if end < start {
+		start, end = end, start
+	}
+	changed := false
+	for col := start; col <= end; col++ {
+		if w.ColVisible(sheet, col) == visible {
+			continue
+		}
+		name := engine.ColumnName(col)
+		if err := w.file.SetColVisible(sheet, name, visible); err != nil {
+			return fmt.Errorf("set visibility of column %s: %w", name, err)
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	w.loadWorkbookSemantics()
+	w.dirty = true
+	return nil
+}
+
+// SetRowsVisible changes a contiguous range of rows without altering their
+// other axis properties. The cached visibility semantics are reloaded so
+// layout and navigation observe the change immediately.
+func (w *Workbook) SetRowsVisible(sheet string, start, end int, visible bool) error {
+	if err := w.ensureSheetEditable(sheet); err != nil {
+		return err
+	}
+	if end < start {
+		start, end = end, start
+	}
+	changed := false
+	for row := start; row <= end; row++ {
+		if w.RowVisible(sheet, row) == visible {
+			continue
+		}
+		if err := w.file.SetRowVisible(sheet, row, visible); err != nil {
+			return fmt.Errorf("set visibility of row %d: %w", row, err)
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	w.loadWorkbookSemantics()
+	w.dirty = true
+	return nil
+}
+
 // ClearStoredRange removes content and transferable cell metadata only from
 // physical cells in a logical range. Axis properties and unrelated workbook
 // structures remain intact.

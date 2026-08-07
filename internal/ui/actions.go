@@ -1595,6 +1595,66 @@ func (a *App) deleteCols() {
 	}
 }
 
+// setSelectedRowsVisible changes only row visibility, leaving heights, styles,
+// and outlining untouched. A snapshot command makes the metadata change
+// undoable alongside other structural operations.
+func (a *App) setSelectedRowsVisible(visible bool) {
+	action := "Hide rows"
+	undoLabel := "Hide Rows"
+	if visible {
+		action = "Unhide rows"
+		undoLabel = "Unhide Rows"
+	}
+	if !a.requireContiguousSelection(action) {
+		return
+	}
+	if a.selectionKind != selectionRows {
+		a.statusMsg = "Select rows to " + strings.ToLower(action)
+		return
+	}
+	sel := a.selectionRect()
+	count := sel.MaxRow - sel.MinRow + 1
+	if a.structuralOp(undoLabel, func() error {
+		return a.wb.SetRowsVisible(a.sheet, sel.MinRow, sel.MaxRow, visible)
+	}) {
+		verb := "Hid"
+		if visible {
+			verb = "Unhid"
+		}
+		a.statusMsg = fmt.Sprintf("%s %d row(s)", verb, count)
+	}
+}
+
+// setSelectedColumnsVisible changes only column visibility, leaving widths,
+// styles, and outlining untouched. A snapshot command makes the metadata
+// change undoable alongside other structural operations.
+func (a *App) setSelectedColumnsVisible(visible bool) {
+	action := "Hide columns"
+	undoLabel := "Hide Columns"
+	if visible {
+		action = "Unhide columns"
+		undoLabel = "Unhide Columns"
+	}
+	if !a.requireContiguousSelection(action) {
+		return
+	}
+	if a.selectionKind != selectionColumns {
+		a.statusMsg = "Select columns to " + strings.ToLower(action)
+		return
+	}
+	sel := a.selectionRect()
+	count := sel.MaxCol - sel.MinCol + 1
+	if a.structuralOp(undoLabel, func() error {
+		return a.wb.SetColumnsVisible(a.sheet, sel.MinCol, sel.MaxCol, visible)
+	}) {
+		verb := "Hid"
+		if visible {
+			verb = "Unhid"
+		}
+		a.statusMsg = fmt.Sprintf("%s %d column(s)", verb, count)
+	}
+}
+
 // applyNumberFormat formats the selection as one snapshot-undoable command
 // (cell-edit replay records content, not styles, so formats undo by
 // snapshot like structural changes do).

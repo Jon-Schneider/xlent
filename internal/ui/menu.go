@@ -32,6 +32,10 @@ const (
 	actInsertCols
 	actDeleteRows
 	actDeleteCols
+	actHideRows
+	actUnhideRows
+	actHideCols
+	actUnhideCols
 	actSelectAll
 	actFind
 	actReplace

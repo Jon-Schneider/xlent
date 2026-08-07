@@ -93,9 +93,10 @@ Windows-Excel-style `Ctrl` bindings.
   tables that auto-expand as you type below them. Data-validation rules already
   in a workbook are enforced on entry (authoring new rules is not yet
   supported).
-- **Named ranges and freeze panes.** Define and delete workbook names from the
-  Formulas menu; freeze/unfreeze panes and force a full `Recalculate All`
-  (`F9`) from the View menu.
+- **Named ranges and view controls.** Define and delete workbook names from the
+  Formulas menu. The View menu can freeze/unfreeze panes, show persistent
+  vertical cell rules with alternating row shading, and force a full
+  `Recalculate All` (`F9`).
 - **Find, Replace, and Go To.** `Ctrl+F` searches content and displayed values
   (`F3` repeats); `Ctrl+H` replaces across the sheet; `Ctrl+G` jumps to a cell,
   range, or `Sheet2!B3`.

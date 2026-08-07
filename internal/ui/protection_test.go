@@ -32,7 +32,7 @@ func TestNormalPasteBlocksLockedTargetAndAllowsUnlockedTarget(t *testing.T) {
 	}
 	file.Close()
 
-	app, err := NewApp(path)
+	app, err := newApp(path, &memoryPreferenceStore{})
 	if err != nil {
 		t.Fatal(err)
 	}

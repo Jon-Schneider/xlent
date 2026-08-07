@@ -8,7 +8,28 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Jon-Schneider/xlent/internal/document"
+	"github.com/Jon-Schneider/xlent/internal/preferences"
 )
+
+type memoryPreferenceStore struct {
+	values  preferences.Values
+	loadErr error
+	saveErr error
+	saves   int
+}
+
+func (s *memoryPreferenceStore) Load() (preferences.Values, error) {
+	return s.values, s.loadErr
+}
+
+func (s *memoryPreferenceStore) Save(values preferences.Values) error {
+	if s.saveErr != nil {
+		return s.saveErr
+	}
+	s.values = values
+	s.saves++
+	return nil
+}
 
 // setupTestApp returns an app over an in-memory workbook sized to a small
 // fixed terminal, with a few cells populated:
@@ -18,7 +39,7 @@ import (
 //	A5: lonely
 func setupTestApp(t *testing.T) (*App, *document.Workbook) {
 	t.Helper()
-	app, err := NewApp("")
+	app, err := newApp("", &memoryPreferenceStore{})
 	if err != nil {
 		t.Fatal(err)
 	}

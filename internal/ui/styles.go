@@ -4,6 +4,9 @@ import "charm.land/lipgloss/v2"
 
 // The palette uses 256-color ANSI codes for broad terminal compatibility.
 var (
+	gridLineColor         = lipgloss.Color("237")
+	gridAlternateRowColor = lipgloss.Color("235")
+
 	styleHeader = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("250")).
 			Background(lipgloss.Color("236"))
@@ -20,6 +23,9 @@ var (
 				Bold(true)
 
 	styleCell = lipgloss.NewStyle()
+
+	styleGridLine = lipgloss.NewStyle().
+			Foreground(gridLineColor)
 
 	styleCellSelected = lipgloss.NewStyle().
 				Background(lipgloss.Color("238"))

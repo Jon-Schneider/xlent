@@ -72,7 +72,7 @@ func TestComparisonFilterPersistsAcrossReload(t *testing.T) {
 	if err := app.wb.SaveAs(path); err != nil {
 		t.Fatal(err)
 	}
-	reloaded, err := NewApp(path)
+	reloaded, err := newApp(path, &memoryPreferenceStore{})
 	if err != nil {
 		t.Fatal(err)
 	}

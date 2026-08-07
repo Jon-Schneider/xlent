@@ -18,7 +18,7 @@ import (
 // caller to populate before rendering.
 func buildApp(t *testing.T) *App {
 	t.Helper()
-	app, err := NewApp("")
+	app, err := newApp("", &memoryPreferenceStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,8 @@ func gridRow(t *testing.T, app *App, row int) string {
 	screen := ansi.Strip(app.View().Content)
 	prefix := strconv.Itoa(row) + " "
 	for _, line := range strings.Split(screen, "\n") {
-		if strings.HasPrefix(strings.TrimLeft(line, " "), prefix) {
+		trimmed := strings.TrimLeft(line, " ")
+		if strings.HasPrefix(trimmed, prefix) || strings.HasPrefix(trimmed, strconv.Itoa(row)+"│") {
 			return line
 		}
 	}

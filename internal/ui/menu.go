@@ -60,6 +60,7 @@ const (
 	actRemoveTable
 	actFreeze
 	actUnfreeze
+	actToggleCellGrid
 	actRecalc
 	actPrevSheet
 	actNextSheet
@@ -154,6 +155,8 @@ func defaultMenus() []menu {
 			{label: "Freeze Panes", action: actFreeze},
 			{label: "Unfreeze Panes", action: actUnfreeze},
 			divider,
+			{label: "Cell Grid", action: actToggleCellGrid},
+			divider,
 			{label: "Recalculate All", shortcut: "F9", action: actRecalc},
 			divider,
 			{label: "Previous Sheet", shortcut: "Ctrl+PgUp", action: actPrevSheet},
@@ -168,6 +171,18 @@ func defaultMenus() []menu {
 			{label: "Attributions…", action: actAttributions},
 		}},
 	}
+}
+
+// menuItemLabel adds a check mark to stateful menu items while keeping menu
+// definitions as plain data.
+func (a *App) menuItemLabel(item menuItem) string {
+	if item.action != actToggleCellGrid {
+		return item.label
+	}
+	if a.preferences.CellGrid {
+		return "✓ " + item.label
+	}
+	return "  " + item.label
 }
 
 // menuBar tracks the open/selected state plus the geometry captured during
@@ -334,7 +349,7 @@ func (a *App) menuDropdownBounds() (x, width int) {
 
 	labelW, shortcutW := 0, 0
 	for _, it := range m.items {
-		labelW = max(labelW, lipgloss.Width(it.label))
+		labelW = max(labelW, lipgloss.Width(a.menuItemLabel(it)))
 		shortcutW = max(shortcutW, lipgloss.Width(it.shortcut))
 	}
 	inner := labelW + 2 + shortcutW
@@ -350,7 +365,7 @@ func (a *App) renderDropdown() []string {
 
 	labelW, shortcutW := 0, 0
 	for _, it := range m.items {
-		labelW = max(labelW, lipgloss.Width(it.label))
+		labelW = max(labelW, lipgloss.Width(a.menuItemLabel(it)))
 		shortcutW = max(shortcutW, lipgloss.Width(it.shortcut))
 	}
 	inner := labelW + 2 + shortcutW
@@ -362,13 +377,14 @@ func (a *App) renderDropdown() []string {
 			lines = append(lines, styleMenuDivider.Render(strings.Repeat("─", width)))
 			continue
 		}
-		pad := inner - lipgloss.Width(it.label) - lipgloss.Width(it.shortcut)
+		label := a.menuItemLabel(it)
+		pad := inner - lipgloss.Width(label) - lipgloss.Width(it.shortcut)
 		itemStyle, shortcutStyle := styleMenuItem, styleMenuShortcut
 		if i == a.menuBar.selected {
 			itemStyle, shortcutStyle = styleMenuItemActive, styleMenuShortcutActive
 		}
 		lines = append(lines,
-			itemStyle.Render(" "+it.label+strings.Repeat(" ", pad))+
+			itemStyle.Render(" "+label+strings.Repeat(" ", pad))+
 				shortcutStyle.Render(it.shortcut)+itemStyle.Render(" "))
 	}
 	return lines

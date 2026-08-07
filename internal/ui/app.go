@@ -12,6 +12,7 @@ import (
 	"github.com/Jon-Schneider/xlent/internal/clipboard"
 	"github.com/Jon-Schneider/xlent/internal/document"
 	"github.com/Jon-Schneider/xlent/internal/engine"
+	"github.com/Jon-Schneider/xlent/internal/preferences"
 	"github.com/Jon-Schneider/xlent/internal/undo"
 )
 
@@ -50,6 +51,9 @@ type App struct {
 
 	menus   []menu
 	menuBar menuBar
+
+	preferenceStore preferences.Storing
+	preferences     preferences.Values
 
 	// headingMenu is the row/column context menu opened by right-clicking a
 	// heading. Its actions operate on the heading selected when it opened.
@@ -96,6 +100,16 @@ type App struct {
 // NewApp creates the root model. path is an optional workbook to open; an
 // empty path starts with a blank workbook.
 func NewApp(path string) (*App, error) {
+	preferenceStore, err := preferences.NewFileStore()
+	if err != nil {
+		return nil, err
+	}
+	return newApp(path, preferenceStore)
+}
+
+// newApp accepts a typed preference store so tests and other isolated callers
+// do not need to read or write a user's real configuration.
+func newApp(path string, preferenceStore preferences.Storing) (*App, error) {
 	var wb *document.Workbook
 	var err error
 	if path == "" {
@@ -105,14 +119,20 @@ func NewApp(path string) (*App, error) {
 	}
 
 	app := &App{
-		wb:        wb,
-		sheet:     wb.Sheets()[0],
-		cursor:    position{Col: 1, Row: 1},
-		anchor:    position{Col: 1, Row: 1},
-		topRow:    1,
-		leftCol:   1,
-		undoStack: undo.NewStack(),
-		menus:     defaultMenus(),
+		wb:              wb,
+		sheet:           wb.Sheets()[0],
+		cursor:          position{Col: 1, Row: 1},
+		anchor:          position{Col: 1, Row: 1},
+		topRow:          1,
+		leftCol:         1,
+		undoStack:       undo.NewStack(),
+		menus:           defaultMenus(),
+		preferenceStore: preferenceStore,
+	}
+	if values, loadErr := preferenceStore.Load(); loadErr != nil {
+		app.statusMsg = "Couldn't load preferences: " + loadErr.Error()
+	} else {
+		app.preferences = values
 	}
 	app.resetActiveSheetPosition()
 	return app, nil
@@ -821,6 +841,8 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.freezePanes()
 	case actUnfreeze:
 		a.unfreezePanes()
+	case actToggleCellGrid:
+		a.toggleCellGrid()
 	case actRecalc:
 		a.recalculateAll()
 	case actPrevSheet:
@@ -839,6 +861,19 @@ func (a *App) execMenuAction(action menuAction) (tea.Model, tea.Cmd) {
 		a.attributions.openPanel()
 	}
 	return a, nil
+}
+
+func (a *App) toggleCellGrid() {
+	a.preferences.CellGrid = !a.preferences.CellGrid
+	state := "off"
+	if a.preferences.CellGrid {
+		state = "on"
+	}
+	if err := a.preferenceStore.Save(a.preferences); err != nil {
+		a.statusMsg = "Cell grid " + state + "; couldn't save preference: " + err.Error()
+		return
+	}
+	a.statusMsg = "Cell grid " + state
 }
 
 // handlePromptKey processes keys while the status-line prompt is open.

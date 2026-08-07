@@ -31,7 +31,7 @@ func TestGridAndNavigationHonorHiddenRowsColumnsAndMergedCells(t *testing.T) {
 	}
 	file.Close()
 
-	app, err := NewApp(path)
+	app, err := newApp(path, &memoryPreferenceStore{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestAppStartsOnFirstVisibleCell(t *testing.T) {
 	}
 	file.Close()
 
-	app, err := NewApp(path)
+	app, err := newApp(path, &memoryPreferenceStore{})
 	if err != nil {
 		t.Fatal(err)
 	}

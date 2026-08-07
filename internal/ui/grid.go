@@ -196,7 +196,7 @@ func (a *App) colWidth(col int) int {
 func (a *App) cellRenderWidth(layout gridLayout, p position) int {
 	width := a.colWidth(p.Col)
 	merged, ok := a.wb.MergedRangeAt(a.sheet, p.Col, p.Row)
-	if !ok || p.Col != merged.MinCol || p.Row != merged.MinRow {
+	if !ok || p.Col != merged.MinCol {
 		return width
 	}
 	for _, col := range layout.cols {
@@ -311,7 +311,6 @@ func (a *App) lastFullyVisibleCol(layout gridLayout) int {
 }
 
 func (a *App) renderGrid(layout gridLayout) string {
-	var b strings.Builder
 	sel := a.selectionRect()
 	visibleCols := make(map[int]bool, len(layout.cols))
 	for _, col := range layout.cols {
@@ -335,6 +334,7 @@ func (a *App) renderGrid(layout gridLayout) string {
 
 	// Column header.
 	filtering := a.filter.active && a.filter.sheet == a.sheet
+	var b strings.Builder
 	b.WriteString(styleHeader.Render(strings.Repeat(" ", layout.gutterW)))
 	for _, c := range layout.cols {
 		name := engine.ColumnName(c)
@@ -353,52 +353,19 @@ func (a *App) renderGrid(layout gridLayout) string {
 		if c >= sel.MinCol && c <= sel.MaxCol {
 			style = styleHeaderActive
 		}
-		b.WriteString(style.Width(a.colWidth(c)).MaxWidth(a.colWidth(c)).Align(lipgloss.Center).Render(name))
+		b.WriteString(a.renderGridSegment(style, name, a.colWidth(c), lipgloss.Center, 0))
 	}
 	b.WriteByte('\n')
 
 	for i, row := range layout.rowsList {
-		gutterStyle := styleHeader
-		if row >= sel.MinRow && row <= sel.MaxRow {
-			gutterStyle = styleHeaderActive
-		}
-		gutterLabel := strconv.Itoa(row) + " "
-		if a.headingDrag.reordering && a.headingDrag.kind == selectionRows && a.headingDrag.dropBefore == row {
-			gutterLabel = strings.Repeat("━", layout.gutterW)
-			gutterStyle = styleInsertionLine
-		}
-		b.WriteString(gutterStyle.Width(layout.gutterW).MaxWidth(layout.gutterW).Align(lipgloss.Right).Render(gutterLabel))
-
-		// Overflow needs the whole row planned before anything is drawn, since
-		// one cell's text can spill across its neighbors: plan, resolve spill,
-		// then emit.
-		plans := a.planRow(layout, row, rowContext{
+		b.WriteString(a.renderGridRow(layout, row, sel, rowContext{
 			refSpans:    refSpans,
 			pointing:    pointing,
 			pointed:     pointed,
 			onEditSheet: onEditSheet,
 			visibleCols: visibleCols,
-		})
-		resolveSpill(plans)
-		for idx := range plans {
-			cr := plans[idx]
-			if cr.skip || cr.consumed {
-				continue
-			}
-			w := cr.w
-			if cr.spanW > 0 {
-				w = cr.spanW
-			}
-			value := cr.value
-			// A non-text value too narrow for its cell can't spill, so show a
-			// "#" fill across the content area, matching Excel.
-			if cr.fill {
-				if content := w - 2*cellPadding; content > 0 && ansi.StringWidth(value) > content {
-					value = strings.Repeat("#", content)
-				}
-			}
-			b.WriteString(cr.style.Width(w).MaxWidth(w).MaxHeight(1).Align(cr.align).Padding(0, cellPadding).Render(value))
-		}
+			alternate:   i%2 == 1,
+		}))
 		if i < layout.rows-1 {
 			b.WriteByte('\n')
 		}
@@ -414,6 +381,63 @@ func (a *App) renderGrid(layout gridLayout) string {
 	return b.String()
 }
 
+func (a *App) renderGridRow(layout gridLayout, row int, sel rect, rc rowContext) string {
+	var b strings.Builder
+	gutterStyle := styleHeader
+	if row >= sel.MinRow && row <= sel.MaxRow {
+		gutterStyle = styleHeaderActive
+	}
+	gutterLabel := strconv.Itoa(row) + " "
+	if a.headingDrag.reordering && a.headingDrag.kind == selectionRows && a.headingDrag.dropBefore == row {
+		gutterLabel = strings.Repeat("━", layout.gutterW)
+		gutterStyle = styleInsertionLine
+	}
+	b.WriteString(gutterStyle.Width(layout.gutterW).MaxWidth(layout.gutterW).Align(lipgloss.Right).Render(gutterLabel))
+
+	// Overflow needs the whole row planned before anything is drawn, since
+	// one cell's text can spill across its neighbors: plan, resolve spill,
+	// then emit.
+	plans := a.planRow(layout, row, rc)
+	resolveSpill(plans)
+	for idx := range plans {
+		cr := plans[idx]
+		if cr.skip || cr.consumed {
+			continue
+		}
+		w := cr.w
+		if cr.spanW > 0 {
+			w = cr.spanW
+		}
+		value := cr.value
+		// A non-text value too narrow for its cell can't spill, so show a
+		// "#" fill across the content area, matching Excel.
+		if cr.fill {
+			if content := w - 2*cellPadding; content > 0 && ansi.StringWidth(value) > content {
+				value = strings.Repeat("#", content)
+			}
+		}
+		b.WriteString(a.renderGridSegment(cr.style, value, w, cr.align, cellPadding))
+	}
+	return b.String()
+}
+
+// renderGridSegment draws a cell or heading within its existing terminal
+// footprint. With the grid enabled, the old left-padding column becomes the
+// vertical rule. Assigning the rule to the cell on its right means selection
+// styling stops before the next boundary and text retains its original x.
+func (a *App) renderGridSegment(style lipgloss.Style, value string, width int, align lipgloss.Position, horizontalPadding int) string {
+	if !a.preferences.CellGrid {
+		return style.Width(width).MaxWidth(width).MaxHeight(1).Align(align).Padding(0, horizontalPadding).Render(value)
+	}
+
+	contentWidth := max(width-2*horizontalPadding, 0)
+	value = ansi.Truncate(value, contentWidth, "")
+	content := lipgloss.PlaceHorizontal(contentWidth, align, value)
+	cell := strings.Repeat(" ", horizontalPadding) + content + strings.Repeat(" ", horizontalPadding)
+	body := ansi.TruncateLeft(cell, 1, "")
+	return styleGridLine.Render("│") + style.Render(body)
+}
+
 // rowContext carries the per-render invariants planRow needs beyond the row
 // itself. Bundling them keeps planRow's signature readable.
 type rowContext struct {
@@ -422,6 +446,7 @@ type rowContext struct {
 	pointed     rect
 	onEditSheet bool
 	visibleCols map[int]bool
+	alternate   bool
 }
 
 // planRow builds a render plan for every visible column in one grid row,
@@ -432,10 +457,14 @@ func (a *App) planRow(layout gridLayout, row int, rc rowContext) []cellPlan {
 	plans := make([]cellPlan, len(layout.cols))
 	for idx, c := range layout.cols {
 		p := position{Col: c, Row: row}
-		cr := cellPlan{col: c, w: a.cellRenderWidth(layout, p), style: styleCell, align: lipgloss.Left}
+		baseStyle := styleCell
+		if a.preferences.CellGrid && rc.alternate {
+			baseStyle = baseStyle.Background(gridAlternateRowColor)
+		}
+		cr := cellPlan{col: c, w: a.cellRenderWidth(layout, p), style: baseStyle, align: lipgloss.Left}
 		merged, inMerge := a.wb.MergedRangeAt(a.sheet, c, row)
 		mergeAnchor := position{Col: merged.MinCol, Row: merged.MinRow}
-		if inMerge && row == merged.MinRow && c > merged.MinCol && rc.visibleCols[merged.MinCol] {
+		if inMerge && c > merged.MinCol && rc.visibleCols[merged.MinCol] {
 			cr.skip = true
 			plans[idx] = cr
 			continue
@@ -473,6 +502,9 @@ func (a *App) planRow(layout gridLayout, row int, rc rowContext) []cellPlan {
 			highlighted = true
 		case isErrorValue(value):
 			style = styleErrorValue
+		}
+		if a.preferences.CellGrid && rc.alternate && !highlighted {
+			style = style.Background(gridAlternateRowColor)
 		}
 
 		styleCellName := p.cellName()

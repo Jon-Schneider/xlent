@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/xuri/excelize/v2"
 
@@ -569,6 +570,10 @@ func TestDraggingSelectedRowReordersAtInsertionLine(t *testing.T) {
 	if !app.headingDrag.reordering || app.headingDrag.dropBefore != 5 {
 		t.Fatalf("drag preview = %+v, want reorder before row 5", app.headingDrag)
 	}
+	draggingRowLabel := styleHeaderDragging.Width(app.layout.gutterW).MaxWidth(app.layout.gutterW).Align(lipgloss.Right).Render("2 ")
+	if !strings.Contains(app.View().Content, draggingRowLabel) {
+		t.Error("dragged row heading must use the dragging highlight")
+	}
 	preview := strings.Split(ansi.Strip(app.View().Content), "\n")
 	indicatorY := -1
 	for i, row := range app.layout.rowsList {
@@ -612,6 +617,10 @@ func TestDraggingSelectedColumnShowsIndicatorAtHeaderBoundary(t *testing.T) {
 
 	if !app.headingDrag.reordering || app.headingDrag.dropBefore != app.layout.cols[destinationIndex] {
 		t.Fatalf("drag preview = %+v, want reorder before column %d", app.headingDrag, app.layout.cols[destinationIndex])
+	}
+	draggingColumnLabel := app.renderGridSegment(styleHeaderDragging, centerColumnLabel("B", app.colWidth(2)), app.colWidth(2), lipgloss.Center, 0)
+	if !strings.Contains(app.View().Content, draggingColumnLabel) {
+		t.Error("dragged column heading must use the dragging highlight")
 	}
 	header := strings.Split(ansi.Strip(app.View().Content), "\n")[app.layout.headerY]
 	beforeMarker, _, found := strings.Cut(header, "┃")

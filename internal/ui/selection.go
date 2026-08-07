@@ -68,6 +68,21 @@ type headingDrag struct {
 	original         rect
 }
 
+// isDraggingHeading reports whether axis belongs to the source band of an
+// active reorder gesture. It deliberately uses the pre-drag selection so the
+// visual remains attached to the rows or columns being moved, not the drop
+// destination.
+func (a *App) isDraggingHeading(kind selectionKind, axis int) bool {
+	drag := a.headingDrag
+	if !drag.reordering || drag.kind != kind {
+		return false
+	}
+	if kind == selectionRows {
+		return axis >= drag.original.MinRow && axis <= drag.original.MaxRow
+	}
+	return axis >= drag.original.MinCol && axis <= drag.original.MaxCol
+}
+
 // selectColumn enters or extends a whole-column selection while retaining the
 // active cell's row. Hidden columns between the endpoints remain included.
 func (a *App) selectColumn(col int, extend bool) {

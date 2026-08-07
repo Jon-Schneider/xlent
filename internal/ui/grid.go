@@ -375,6 +375,9 @@ func (a *App) renderGrid(layout gridLayout) string {
 		if c >= sel.MinCol && c <= sel.MaxCol {
 			style = styleHeaderActive
 		}
+		if a.isDraggingHeading(selectionColumns, c) {
+			style = styleHeaderDragging
+		}
 		heading := a.renderGridSegment(style, centerColumnLabel(name, a.colWidth(c)), a.colWidth(c), lipgloss.Center, 0)
 		if a.headingDrag.reordering && a.headingDrag.kind == selectionColumns && a.headingDrag.dropBefore == c {
 			// Replace the first cell in the destination heading rather than
@@ -429,6 +432,9 @@ func (a *App) renderGridRow(layout gridLayout, row int, sel rect, rc rowContext)
 	gutterStyle := styleHeader
 	if row >= sel.MinRow && row <= sel.MaxRow {
 		gutterStyle = styleHeaderActive
+	}
+	if a.isDraggingHeading(selectionRows, row) {
+		gutterStyle = styleHeaderDragging
 	}
 	gutterLabel := strconv.Itoa(row) + " "
 	b.WriteString(gutterStyle.Width(layout.gutterW).MaxWidth(layout.gutterW).Align(lipgloss.Right).Render(gutterLabel))

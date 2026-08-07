@@ -17,6 +17,14 @@ var (
 				Background(lipgloss.Color("24")).
 				Bold(true)
 
+	// The source headings use a lighter blue while their selected rows or
+	// columns are being reordered. This distinguishes an active drag from an
+	// ordinary whole-axis selection.
+	styleHeaderDragging = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("231")).
+				Background(lipgloss.Color("31")).
+				Bold(true)
+
 	styleInsertionLine = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("226")).
 				Background(lipgloss.Color("236")).

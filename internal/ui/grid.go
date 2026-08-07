@@ -375,7 +375,7 @@ func (a *App) renderGrid(layout gridLayout) string {
 		if c >= sel.MinCol && c <= sel.MaxCol {
 			style = styleHeaderActive
 		}
-		heading := a.renderGridSegment(style, name, a.colWidth(c), lipgloss.Center, 0)
+		heading := a.renderGridSegment(style, centerColumnLabel(name, a.colWidth(c)), a.colWidth(c), lipgloss.Center, 0)
 		if a.headingDrag.reordering && a.headingDrag.kind == selectionColumns && a.headingDrag.dropBefore == c {
 			// Replace the first cell in the destination heading rather than
 			// prepending to its label. The marker therefore stays at the
@@ -412,6 +412,16 @@ func (a *App) renderGrid(layout gridLayout) string {
 		}
 	}
 	return b.String()
+}
+
+// centerColumnLabel resolves the unavoidable one-cell remainder in an
+// even-width terminal column. Putting it before the label makes one-letter
+// headings look visually centered instead of one cell left of center.
+func centerColumnLabel(label string, width int) string {
+	if remaining := width - ansi.StringWidth(label); remaining > 0 && remaining%2 == 1 {
+		return " " + label
+	}
+	return label
 }
 
 func (a *App) renderGridRow(layout gridLayout, row int, sel rect, rc rowContext) string {

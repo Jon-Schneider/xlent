@@ -9,6 +9,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Jon-Schneider/xlent/internal/engine"
 	"github.com/Jon-Schneider/xlent/internal/preferences"
 )
 
@@ -191,6 +192,21 @@ func TestCellGridPreservesTextAlignmentAcrossCellStates(t *testing.T) {
 		}
 		if ansi.StringWidth(gridded) != ansi.StringWidth(plain) {
 			t.Errorf("%s width changed: grid=%d plain=%d", test.name, ansi.StringWidth(gridded), ansi.StringWidth(plain))
+		}
+	}
+}
+
+func TestCellGridCentersColumnLabels(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.preferences.CellGrid = true
+
+	header := strings.Split(ansi.Strip(app.View().Content), "\n")[app.layout.headerY]
+	for index, col := range app.layout.cols[:3] {
+		label := engine.ColumnName(col)
+		got := displayColumnOf(header, label)
+		want := app.layout.colX[index] + (app.colWidth(col)-ansi.StringWidth(label)+1)/2
+		if got != want {
+			t.Errorf("column %s label begins at x = %d, want centered x = %d in header %q", label, got, want, header)
 		}
 	}
 }

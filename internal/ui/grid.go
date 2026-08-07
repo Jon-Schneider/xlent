@@ -99,12 +99,14 @@ func (a *App) selectionRect() rect {
 // gridLayout captures where everything landed during the last render so
 // mouse events can be hit-tested against it.
 type gridLayout struct {
-	gutterW    int
-	headerY    int   // screen line of the column header row
-	gridY0     int   // first screen line of grid cells
-	rows       int   // number of grid lines available
-	topRow     int   // first scrollable sheet row (past the frozen region)
-	rowsList   []int // sheet row shown on each grid line, top to bottom
+	gutterW int
+	headerY int // screen line of the column header row
+	gridY0  int // first screen line of grid cells
+	rows    int // number of grid lines available
+	topRow  int // first scrollable sheet row (past the frozen region)
+	// rowsList holds the sheet row shown on each grid line, top to bottom. A
+	// zero entry is a row-reorder insertion-line preview, not a sheet row.
+	rowsList   []int
 	cols       []int // visible column numbers, left to right (frozen first)
 	colX       []int // screen x where each visible column starts
 	frozenRows int   // count of leading rows frozen in place
@@ -243,6 +245,7 @@ func (a *App) computeLayout() gridLayout {
 		}
 		rowsList = append(rowsList, r)
 	}
+	rowsList = a.insertRowDropIndicator(rowsList, lines)
 
 	maxRowShown := 1
 	for _, r := range rowsList {
@@ -285,6 +288,28 @@ func (a *App) computeLayout() gridLayout {
 		frozenCols: frozenCols,
 		tabsY:      height - 2,
 	}
+}
+
+// insertRowDropIndicator reserves a physical grid line immediately before the
+// visible destination row. A terminal cannot draw between character rows, so
+// reserving this line makes the preview an actual row boundary without
+// shifting the chrome below the grid.
+func (a *App) insertRowDropIndicator(rows []int, maxLines int) []int {
+	drag := a.headingDrag
+	if !drag.reordering || drag.kind != selectionRows || drag.dropBefore == 0 {
+		return rows
+	}
+	for i, row := range rows {
+		if row != drag.dropBefore {
+			continue
+		}
+		withIndicator := make([]int, 0, min(len(rows)+1, maxLines))
+		withIndicator = append(withIndicator, rows[:i]...)
+		withIndicator = append(withIndicator, 0)
+		withIndicator = append(withIndicator, rows[i:]...)
+		return withIndicator[:min(len(withIndicator), maxLines)]
+	}
+	return rows
 }
 
 // rowHidden reports whether the workbook marks a row hidden, including rows
@@ -338,9 +363,6 @@ func (a *App) renderGrid(layout gridLayout) string {
 	b.WriteString(styleHeader.Render(strings.Repeat(" ", layout.gutterW)))
 	for _, c := range layout.cols {
 		name := engine.ColumnName(c)
-		if a.headingDrag.reordering && a.headingDrag.kind == selectionColumns && a.headingDrag.dropBefore == c {
-			name = "┃" + name
-		}
 		// A filter marks its columns: ▾ when a criterion is set, ▿ otherwise.
 		if filtering && c >= a.filter.minCol && c <= a.filter.maxCol {
 			if a.filter.criteria[c] != "" {
@@ -353,19 +375,30 @@ func (a *App) renderGrid(layout gridLayout) string {
 		if c >= sel.MinCol && c <= sel.MaxCol {
 			style = styleHeaderActive
 		}
-		b.WriteString(a.renderGridSegment(style, name, a.colWidth(c), lipgloss.Center, 0))
+		heading := a.renderGridSegment(style, name, a.colWidth(c), lipgloss.Center, 0)
+		if a.headingDrag.reordering && a.headingDrag.kind == selectionColumns && a.headingDrag.dropBefore == c {
+			// Replace the first cell in the destination heading rather than
+			// prepending to its label. The marker therefore stays at the
+			// boundary between headers while the label remains centered.
+			heading = styleInsertionLine.Render("┃") + ansi.TruncateLeft(heading, 1, "")
+		}
+		b.WriteString(heading)
 	}
 	b.WriteByte('\n')
 
 	for i, row := range layout.rowsList {
-		b.WriteString(a.renderGridRow(layout, row, sel, rowContext{
-			refSpans:    refSpans,
-			pointing:    pointing,
-			pointed:     pointed,
-			onEditSheet: onEditSheet,
-			visibleCols: visibleCols,
-			alternate:   i%2 == 1,
-		}))
+		if row == 0 {
+			b.WriteString(styleInsertionLine.Width(max(a.width, 20)).MaxWidth(max(a.width, 20)).Render(strings.Repeat("━", max(a.width, 20))))
+		} else {
+			b.WriteString(a.renderGridRow(layout, row, sel, rowContext{
+				refSpans:    refSpans,
+				pointing:    pointing,
+				pointed:     pointed,
+				onEditSheet: onEditSheet,
+				visibleCols: visibleCols,
+				alternate:   i%2 == 1,
+			}))
+		}
 		if i < layout.rows-1 {
 			b.WriteByte('\n')
 		}
@@ -388,10 +421,6 @@ func (a *App) renderGridRow(layout gridLayout, row int, sel rect, rc rowContext)
 		gutterStyle = styleHeaderActive
 	}
 	gutterLabel := strconv.Itoa(row) + " "
-	if a.headingDrag.reordering && a.headingDrag.kind == selectionRows && a.headingDrag.dropBefore == row {
-		gutterLabel = strings.Repeat("━", layout.gutterW)
-		gutterStyle = styleInsertionLine
-	}
 	b.WriteString(gutterStyle.Width(layout.gutterW).MaxWidth(layout.gutterW).Align(lipgloss.Right).Render(gutterLabel))
 
 	// Overflow needs the whole row planned before anything is drawn, since

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/xuri/excelize/v2"
 
 	"github.com/Jon-Schneider/xlent/internal/clipboard"
@@ -568,6 +569,23 @@ func TestDraggingSelectedRowReordersAtInsertionLine(t *testing.T) {
 	if !app.headingDrag.reordering || app.headingDrag.dropBefore != 5 {
 		t.Fatalf("drag preview = %+v, want reorder before row 5", app.headingDrag)
 	}
+	preview := strings.Split(ansi.Strip(app.View().Content), "\n")
+	indicatorY := -1
+	for i, row := range app.layout.rowsList {
+		if row == 0 {
+			indicatorY = app.layout.gridY0 + i
+			break
+		}
+	}
+	if indicatorY < 0 {
+		t.Fatal("row reorder indicator missing from grid layout")
+	}
+	if got, want := preview[indicatorY], strings.Repeat("━", max(app.width, 20)); got != want {
+		t.Errorf("indicator line = %q, want full-width row boundary", got)
+	}
+	if got := app.layout.rowAt(indicatorY); got != 0 {
+		t.Errorf("indicator hit target = row %d, want no row", got)
+	}
 	app.Update(tea.MouseReleaseMsg{X: app.layout.gutterW - 1, Y: dropY, Button: tea.MouseLeft})
 
 	if got := workbook.RawContent(app.sheet, "A4"); got != "30" {
@@ -578,5 +596,29 @@ func TestDraggingSelectedRowReordersAtInsertionLine(t *testing.T) {
 	}
 	if !strings.Contains(app.statusMsg, "Moved rows 2:2 before row 5") {
 		t.Errorf("status = %q, want move summary", app.statusMsg)
+	}
+}
+
+func TestDraggingSelectedColumnShowsIndicatorAtHeaderBoundary(t *testing.T) {
+	app, _ := setupTestApp(t)
+	app.selectColumn(2, false)
+	app.View()
+
+	startX := app.layout.colX[1] + 2
+	destinationIndex := 2
+	dropX := app.layout.colX[destinationIndex] + 1
+	app.Update(tea.MouseClickMsg{X: startX, Y: app.layout.headerY, Button: tea.MouseLeft})
+	app.Update(tea.MouseMotionMsg{X: dropX, Y: app.layout.headerY, Button: tea.MouseLeft})
+
+	if !app.headingDrag.reordering || app.headingDrag.dropBefore != app.layout.cols[destinationIndex] {
+		t.Fatalf("drag preview = %+v, want reorder before column %d", app.headingDrag, app.layout.cols[destinationIndex])
+	}
+	header := strings.Split(ansi.Strip(app.View().Content), "\n")[app.layout.headerY]
+	beforeMarker, _, found := strings.Cut(header, "┃")
+	if !found {
+		t.Fatal("column reorder indicator missing from header")
+	}
+	if got, want := ansi.StringWidth(beforeMarker), app.layout.colX[destinationIndex]; got != want {
+		t.Errorf("indicator x = %d, want header boundary x = %d", got, want)
 	}
 }
